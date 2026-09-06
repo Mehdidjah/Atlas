@@ -16,14 +16,13 @@ const sitesWorkerSource = `export default {
       return new Response('Static asset binding is unavailable.', { status: 503 });
     }
 
-    const response = await assets.fetch(request);
     const acceptsHtml = (request.headers.get('accept') || '').includes('text/html');
-    if (response.status !== 404 || request.method !== 'GET' || !acceptsHtml) {
-      return response;
+    if (request.method === 'GET' && acceptsHtml) {
+      const indexUrl = new URL('/index.html', request.url);
+      return assets.fetch(new Request(indexUrl, request));
     }
 
-    const indexUrl = new URL('/index.html', request.url);
-    return assets.fetch(new Request(indexUrl, request));
+    return assets.fetch(request);
   },
 };\n`;
 const staticSitesWorker = (): Plugin => {
