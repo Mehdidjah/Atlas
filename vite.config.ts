@@ -18,7 +18,7 @@ const sitesWorkerSource = `export default {
 
     const acceptsHtml = (request.headers.get('accept') || '').includes('text/html');
     if (request.method === 'GET' && acceptsHtml) {
-      const indexUrl = new URL('/index.html', request.url);
+      const indexUrl = new URL('/', request.url);
       return assets.fetch(new Request(indexUrl, request));
     }
 
