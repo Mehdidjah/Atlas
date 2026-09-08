@@ -7,10 +7,12 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run typecheck && npm run build:worker && vite build",
+    "build:worker": "esbuild worker/index.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/server/index.js",
     "preview": "vite preview",
-    "typecheck": "tsc -b --pretty false",
-    "lint": "oxlint src",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.worker.json --pretty false",
+    "lint": "oxlint src db vite.config.ts drizzle.config.ts && oxlint --tsconfig tsconfig.worker.json worker",
+    "db:generate": "drizzle-kit generate",
     "format": "oxfmt"
   },
   "dependencies": {
@@ -24,6 +26,7 @@
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
     "date-fns": "4.1.0",
+    "drizzle-orm": "^0.45.2",
     "embla-carousel-react": "8.5.2",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
@@ -40,12 +43,15 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260908.1",
     "@openai/sites-vite-plugin": "0.2.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.2",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",

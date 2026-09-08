@@ -2,41 +2,51 @@ import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
-const sitesWorkerSource = `export default {
-  async fetch(request, env) {
-    const assets = env && env.ASSETS;
-    if (!assets || typeof assets.fetch !== 'function') {
-      return new Response('Static asset binding is unavailable.', { status: 503 });
-    }
-
-    const acceptsHtml = (request.headers.get('accept') || '').includes('text/html');
-    if (request.method === 'GET' && acceptsHtml) {
-      const indexUrl = new URL('/', request.url);
-      return assets.fetch(new Request(indexUrl, request));
-    }
-
-    return assets.fetch(request);
-  },
-};\n`;
-const staticSitesWorker = (): Plugin => {
-  let projectRoot = process.cwd();
-
+const localMetaApi = (): Plugin => {
+  const respond = (response: import('node:http').ServerResponse) => {
+    response.statusCode = 200;
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Type', 'application/json; charset=utf-8');
+    response.end(
+      JSON.stringify({
+        configured: false,
+        redirectUri: 'Configure META_REDIRECT_URI in the deployed environment',
+        requiredPermissions: [
+          'ads_read',
+          'ads_management',
+          'business_management',
+        ],
+        connection: null,
+        accounts: [],
+      }),
+    );
+  };
   return {
-    name: 'aster-static-sites-worker',
-    configResolved(config) {
-      projectRoot = config.root;
+    name: 'aster-local-meta-api',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        if (request.method === 'GET' && url.pathname === '/api/meta/status') {
+          respond(response);
+          return;
+        }
+        next();
+      });
     },
-    async closeBundle() {
-      const serverDirectory = resolve(projectRoot, 'dist', 'server');
-      await mkdir(serverDirectory, { recursive: true });
-      await writeFile(resolve(serverDirectory, 'index.js'), sitesWorkerSource);
+    configurePreviewServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const url = new URL(request.url ?? '/', 'http://localhost');
+        if (request.method === 'GET' && url.pathname === '/api/meta/status') {
+          respond(response);
+          return;
+        }
+        next();
+      });
     },
   };
 };
@@ -48,5 +58,5 @@ export default defineConfig({
   server: isCodexSeatbeltSandbox
     ? { watch: { useFsEvents: false, usePolling: true } }
     : undefined,
-  plugins: [react(), staticSitesWorker(), sites()],
+  plugins: [react(), localMetaApi(), sites()],
 });
