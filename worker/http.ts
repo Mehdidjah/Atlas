@@ -1,7 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import type { AuthenticatedUser } from './types';
-
 const apiHeaders = {
   'Cache-Control': 'no-store',
   'Content-Type': 'application/json; charset=utf-8',
@@ -36,22 +34,6 @@ export const noContent = () =>
       'X-Content-Type-Options': 'nosniff',
     },
   });
-
-export const requireUser = (request: Request): AuthenticatedUser => {
-  const id = request.headers.get('oai-authenticated-user-id')?.trim();
-  if (!id) {
-    throw new ApiError(
-      401,
-      'authentication_required',
-      'Sign in to Aster before connecting Meta Ads.',
-    );
-  }
-  return {
-    id,
-    email: request.headers.get('oai-authenticated-user-email'),
-    name: request.headers.get('oai-authenticated-user-name'),
-  };
-};
 
 export const requireSameOrigin = (request: Request) => {
   const origin = request.headers.get('origin');

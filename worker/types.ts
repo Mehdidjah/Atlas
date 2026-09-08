@@ -1,6 +1,13 @@
 /// <reference types="@cloudflare/workers-types" />
 
 export interface Env {
+  AUTH_ORIGIN?: string;
+  AUTH_GOOGLE_CLIENT_ID?: string;
+  AUTH_GOOGLE_CLIENT_SECRET?: string;
+  AUTH_FACEBOOK_APP_ID?: string;
+  AUTH_FACEBOOK_APP_SECRET?: string;
+  AUTH_FACEBOOK_GRAPH_VERSION?: string;
+  AUTH_TRUST_HOST_HEADERS?: string;
   ASSETS: Fetcher;
   DB: D1Database;
   META_APP_ID?: string;
@@ -12,6 +19,8 @@ export interface Env {
 }
 
 export interface AuthenticatedUser {
+  source: 'session' | 'hosted';
+  defaultWorkspaceId: string;
   id: string;
   email: string | null;
   name: string | null;

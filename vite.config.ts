@@ -51,6 +51,50 @@ const localMetaApi = (): Plugin => {
   };
 };
 
+// Vite is an honest UI preview, not an authentication server.
+const localAuthApi = (): Plugin => {
+  const install = (server: { middlewares: import('vite').Connect.Server }) => {
+    server.middlewares.use((request, response, next) => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      if (!url.pathname.startsWith('/api/auth/')) return next();
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Content-Type', 'application/json; charset=utf-8');
+      if (request.method === 'GET' && url.pathname === '/api/auth/providers') {
+        response.end(
+          JSON.stringify({ google: false, facebook: false, hosted: false }),
+        );
+      } else if (
+        request.method === 'GET' &&
+        url.pathname === '/api/auth/session'
+      ) {
+        response.end(JSON.stringify({ user: null, workspaces: [] }));
+      } else if (
+        request.method === 'POST' &&
+        url.pathname === '/api/auth/logout'
+      ) {
+        response.statusCode = 204;
+        response.end();
+      } else {
+        response.statusCode = 503;
+        response.end(
+          JSON.stringify({
+            error: {
+              code: 'provider_unavailable',
+              message:
+                'Sign-in is unavailable in the local preview. Configure the deployed Worker and identity provider; no account or session has been created.',
+            },
+          }),
+        );
+      }
+    });
+  };
+  return {
+    name: 'aster-local-auth-api',
+    configureServer: install,
+    configurePreviewServer: install,
+  };
+};
+
 export default defineConfig({
   build: { chunkSizeWarningLimit: 600, outDir: 'dist/client' },
   css: { postcss: { plugins: [tailwindcss()] } },
@@ -58,5 +102,5 @@ export default defineConfig({
   server: isCodexSeatbeltSandbox
     ? { watch: { useFsEvents: false, usePolling: true } }
     : undefined,
-  plugins: [react(), localMetaApi(), sites()],
+  plugins: [react(), localMetaApi(), localAuthApi(), sites()],
 });

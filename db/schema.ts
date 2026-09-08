@@ -79,3 +79,81 @@ export const metaAdAccounts = sqliteTable(
     ),
   ],
 );
+
+// Aster identity is separate from Meta ad-account authorization.
+export const authUsers = sqliteTable('auth_users', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  email: text('email'), // Informational, intentionally not unique.
+  defaultWorkspaceId: text('default_workspace_id').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+export const authIdentities = sqliteTable(
+  'auth_identities',
+  {
+    provider: text('provider').notNull(),
+    subject: text('subject').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_identity_subject_idx').on(table.provider, table.subject),
+    index('auth_identity_user_idx').on(table.userId),
+  ],
+);
+export const authWorkspaces = sqliteTable('auth_workspaces', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+export const authWorkspaceMembers = sqliteTable(
+  'auth_workspace_members',
+  {
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => authWorkspaces.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_workspace_member_idx').on(
+      table.workspaceId,
+      table.userId,
+    ),
+    index('auth_workspace_user_idx').on(table.userId),
+  ],
+);
+export const authSessions = sqliteTable(
+  'auth_sessions',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => authUsers.id, { onDelete: 'cascade' }),
+    expiresAt: integer('expires_at').notNull(),
+    createdAt: integer('created_at').notNull(),
+    revokedAt: integer('revoked_at'),
+  },
+  (table) => [
+    index('auth_session_expiry_idx').on(table.expiresAt),
+    index('auth_session_user_idx').on(table.userId),
+  ],
+);
+export const authOAuthStates = sqliteTable(
+  'auth_oauth_states',
+  {
+    stateHash: text('state_hash').primaryKey(),
+    browserHash: text('browser_hash').notNull(),
+    provider: text('provider').notNull(),
+    returnTo: text('return_to'),
+    pkceVerifier: text('pkce_verifier').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('auth_state_expiry_idx').on(table.expiresAt)],
+);

@@ -23,7 +23,6 @@ import {
   noContent,
   parseJsonBody,
   requireSameOrigin,
-  requireUser,
 } from './http';
 import {
   META_SCOPES,
@@ -37,6 +36,12 @@ import {
   revokeMetaPermissions,
 } from './meta';
 import type { Env, MetaConfig, StoredConnection } from './types';
+import {
+  currentUser,
+  handleAuthRequest,
+  requireUser,
+  requireWorkspaceAccess,
+} from './auth';
 
 const WORKSPACE_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -90,9 +95,10 @@ const serializeConnection = (connection: StoredConnection) => {
 };
 
 const handleStatus = async (request: Request, env: Env) => {
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const url = new URL(request.url);
   const workspaceId = requireWorkspaceId(url);
+  await requireWorkspaceAccess(env, user, workspaceId);
   const config = getMetaConfig(env);
   const connection = await getStoredConnection(env.DB, user.id, workspaceId);
   const accounts = connection
@@ -118,10 +124,11 @@ const handleStatus = async (request: Request, env: Env) => {
 };
 
 const handleConnect = async (request: Request, env: Env) => {
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const config = requireMetaConfig(env);
   const url = new URL(request.url);
   const workspaceId = requireWorkspaceId(url);
+  await requireWorkspaceAccess(env, user, workspaceId);
   const returnTo = connectionPath(workspaceId);
   const now = Date.now();
   const state = createOAuthState();
@@ -152,7 +159,7 @@ const handleConnect = async (request: Request, env: Env) => {
 };
 
 const handleCallback = async (request: Request, env: Env) => {
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const config = requireMetaConfig(env);
   const url = new URL(request.url);
   const rawState = url.searchParams.get('state');
@@ -176,6 +183,7 @@ const handleCallback = async (request: Request, env: Env) => {
       'The connection request expired or has already been used.',
     );
   }
+  await requireWorkspaceAccess(env, user, state.workspace_id);
   const expectedReturnTo = connectionPath(state.workspace_id);
   const returnTo =
     state.return_to === expectedReturnTo ? state.return_to : expectedReturnTo;
@@ -240,9 +248,10 @@ const readConnectionToken = async (
 
 const handleRefresh = async (request: Request, env: Env) => {
   requireSameOrigin(request);
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const config = requireMetaConfig(env);
   const workspaceId = requireWorkspaceId(new URL(request.url));
+  await requireWorkspaceAccess(env, user, workspaceId);
   const connection = await getStoredConnection(env.DB, user.id, workspaceId);
   if (!connection) {
     throw new ApiError(404, 'connection_not_found', 'Connect Meta Ads first.');
@@ -270,8 +279,9 @@ const handleRefresh = async (request: Request, env: Env) => {
 
 const handleSelectAccounts = async (request: Request, env: Env) => {
   requireSameOrigin(request);
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const workspaceId = requireWorkspaceId(new URL(request.url));
+  await requireWorkspaceAccess(env, user, workspaceId);
   const body = await parseJsonBody<{ accountIds?: unknown }>(request);
   if (
     !Array.isArray(body.accountIds) ||
@@ -308,8 +318,9 @@ const handleSelectAccounts = async (request: Request, env: Env) => {
 
 const handleDisconnect = async (request: Request, env: Env) => {
   requireSameOrigin(request);
-  const user = requireUser(request);
+  const user = await requireUser(request, env);
   const workspaceId = requireWorkspaceId(new URL(request.url));
+  await requireWorkspaceAccess(env, user, workspaceId);
   const connection = await getStoredConnection(env.DB, user.id, workspaceId);
   if (!connection) return noContent();
 
@@ -332,6 +343,8 @@ const handleDisconnect = async (request: Request, env: Env) => {
 
 const handleApiRequest = async (request: Request, env: Env) => {
   const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/auth/'))
+    return handleAuthRequest(request, env);
   if (url.pathname === '/api/meta/status' && request.method === 'GET') {
     return handleStatus(request, env);
   }
@@ -364,10 +377,9 @@ const serveApp = async (request: Request, env: Env) => {
   if (request.method === 'GET' && acceptsHtml) {
     const isAuthScreen =
       url.pathname === '/sign-in' || url.pathname === '/sign-up';
-    const authenticated = Boolean(
-      request.headers.get('oai-authenticated-user-id')?.trim(),
-    );
-    if (!isAuthScreen && !authenticated) {
+    const user = await currentUser(request, env);
+    const isDemo = /^\/workspaces\/demo(?:\/|$)/.test(url.pathname);
+    if (!isAuthScreen && url.pathname !== '/' && !isDemo && !user) {
       const signInUrl = new URL('/sign-in', url.origin);
       signInUrl.searchParams.set('returnTo', `${url.pathname}${url.search}`);
       return new Response(null, {
@@ -380,6 +392,11 @@ const serveApp = async (request: Request, env: Env) => {
         },
       });
     }
+    const workspace = /^\/workspaces\/([a-zA-Z0-9_-]{1,80})(?:\/|$)/.exec(
+      url.pathname,
+    );
+    if (user && workspace && !isDemo)
+      await requireWorkspaceAccess(env, user, workspace[1]);
     return env.ASSETS.fetch(new Request(new URL('/', request.url), request));
   }
   return env.ASSETS.fetch(request);
