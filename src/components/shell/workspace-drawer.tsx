@@ -139,13 +139,19 @@ export function WorkspaceDrawer({
           </span>
           <span>Partner program</span>
         </button>
-        <div className={`${rowClass} group`}>
+        {/* Dispatch owns this route and requires a top-level browser navigation. */}
+        {/* oxlint-disable-next-line next/no-html-link-for-pages */}
+        <a
+          href="/signout-with-chatgpt?return_to=/sign-in"
+          target="_top"
+          className={`${rowClass} group`}
+        >
           <span className="grid size-8 place-items-center rounded-full bg-white/10">
             <UserRound className="size-4 transition-transform group-hover:-translate-y-0.5" />
           </span>
-          <span className="min-w-0 flex-1 truncate">Alex Morgan</span>
+          <span className="min-w-0 flex-1 truncate">Sign out</span>
           <LogOut className="size-4 transition-transform group-hover:-translate-x-1" />
-        </div>
+        </a>
       </div>
     </aside>
   );

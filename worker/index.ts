@@ -357,10 +357,29 @@ const handleApiRequest = async (request: Request, env: Env) => {
 };
 
 const serveApp = async (request: Request, env: Env) => {
+  const url = new URL(request.url);
   const acceptsHtml = (request.headers.get('accept') || '').includes(
     'text/html',
   );
   if (request.method === 'GET' && acceptsHtml) {
+    const isAuthScreen =
+      url.pathname === '/sign-in' || url.pathname === '/sign-up';
+    const authenticated = Boolean(
+      request.headers.get('oai-authenticated-user-id')?.trim(),
+    );
+    if (!isAuthScreen && !authenticated) {
+      const signInUrl = new URL('/sign-in', url.origin);
+      signInUrl.searchParams.set('returnTo', `${url.pathname}${url.search}`);
+      return new Response(null, {
+        status: 302,
+        headers: {
+          'Cache-Control': 'no-store',
+          Location: signInUrl.toString(),
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
     return env.ASSETS.fetch(new Request(new URL('/', request.url), request));
   }
   return env.ASSETS.fetch(request);

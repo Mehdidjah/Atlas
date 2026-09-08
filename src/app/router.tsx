@@ -22,6 +22,14 @@ const metaConnectionSearchSchema = z.object({
   reason: z.string().max(80).optional(),
 });
 
+const authSearchSchema = z.object({
+  returnTo: z
+    .string()
+    .max(500)
+    .refine((value) => value.startsWith('/') && !value.startsWith('//'))
+    .optional(),
+});
+
 const performanceSearchSchema = z.object({
   range: z.enum(['7d', '30d', '90d']).optional(),
   compare: z.enum(['previous', 'year']).optional(),
@@ -77,6 +85,26 @@ const indexRoute = createRoute({
       params: { workspaceId: 'demo' },
     });
   },
+});
+
+const signInRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sign-in',
+  validateSearch: (search) => authSearchSchema.parse(search),
+  component: lazyRouteComponent(
+    () => import('@/src/features/auth/auth-page'),
+    'SignInPage',
+  ),
+});
+
+const signUpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sign-up',
+  validateSearch: (search) => authSearchSchema.parse(search),
+  component: lazyRouteComponent(
+    () => import('@/src/features/auth/auth-page'),
+    'SignUpPage',
+  ),
 });
 
 const homeRoute = createRoute({
@@ -180,6 +208,8 @@ const metaConnectionRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  signInRoute,
+  signUpRoute,
   homeRoute,
   chatRoute,
   performanceRoute,
