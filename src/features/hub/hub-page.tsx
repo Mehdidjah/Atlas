@@ -171,8 +171,8 @@ export function HubPage() {
               <div className="mt-6 flex gap-3 rounded-2xl bg-[#f8f8f8] p-4">
                 <LockKeyhole className="mt-0.5 size-4 shrink-0" />
                 <p className="text-[13px] leading-[18px] text-[#636363]">
-                  OAuth access is scoped per workspace. Tokens should be
-                  encrypted server-side when you connect the production backend.
+                  OAuth access is scoped to the signed-in user and workspace.
+                  Platform tokens are encrypted before they are stored.
                 </p>
               </div>
               <button
@@ -194,16 +194,25 @@ export function HubPage() {
               </h1>
               <p className="mt-2 text-[#636363]">
                 {getValues('name')} is configured for {getValues('platform')} in{' '}
-                {getValues('region')}. This frontend demo does not request real
-                platform credentials.
+                {getValues('region')}.
               </p>
-              <Link
-                to="/workspaces/$workspaceId/performance"
-                params={{ workspaceId: 'demo' }}
-                className="mt-8 grid h-12 w-full place-items-center rounded-full bg-[#161616] text-[18px] font-semibold text-white hover:bg-[#2e2e2e]"
-              >
-                Open Performance
-              </Link>
+              {getValues('platform') === 'Meta Ads' ? (
+                <Link
+                  to="/workspaces/$workspaceId/connections/meta"
+                  params={{ workspaceId: 'demo' }}
+                  className="mt-8 grid h-12 w-full place-items-center rounded-full bg-[#161616] text-[18px] font-semibold text-white hover:bg-[#2e2e2e]"
+                >
+                  Continue with Meta
+                </Link>
+              ) : (
+                <Link
+                  to="/workspaces/$workspaceId/performance"
+                  params={{ workspaceId: 'demo' }}
+                  className="mt-8 grid h-12 w-full place-items-center rounded-full bg-[#161616] text-[18px] font-semibold text-white hover:bg-[#2e2e2e]"
+                >
+                  Open Performance
+                </Link>
+              )}
             </div>
           ) : null}
         </div>

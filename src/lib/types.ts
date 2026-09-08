@@ -89,3 +89,35 @@ export interface ActivityItem {
   time: string;
   kind: 'agent' | 'campaign' | 'alert';
 }
+
+export interface MetaConnection {
+  id: string;
+  metaUserId: string;
+  metaUserName: string | null;
+  status: string;
+  scopes: string[];
+  tokenExpiresAt: number | null;
+  lastSyncedAt: number | null;
+  connectedAt: number;
+  updatedAt: number;
+}
+
+export interface MetaAdAccount {
+  metaAccountId: string;
+  accountId: string | null;
+  name: string;
+  accountStatus: number | null;
+  currency: string | null;
+  timezoneName: string | null;
+  businessId: string | null;
+  businessName: string | null;
+  selected: boolean;
+}
+
+export interface MetaConnectionStatus {
+  configured: boolean;
+  redirectUri: string;
+  requiredPermissions: string[];
+  connection: MetaConnection | null;
+  accounts: MetaAdAccount[];
+}

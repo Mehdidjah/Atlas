@@ -19,7 +19,7 @@ export function WorkspaceDrawer({
   onClose,
 }: {
   open: boolean;
-  section: 'home' | 'performance' | 'stage';
+  section: 'home' | 'performance' | 'stage' | 'hub';
   workspaceId: string;
   onClose: () => void;
 }) {
@@ -38,10 +38,15 @@ export function WorkspaceDrawer({
             to: '/workspaces/$workspaceId/performance' as const,
             params: { workspaceId: id },
           }
-        : {
-            to: '/workspaces/$workspaceId/stage' as const,
-            params: { workspaceId: id },
-          };
+        : section === 'stage'
+          ? {
+              to: '/workspaces/$workspaceId/stage' as const,
+              params: { workspaceId: id },
+            }
+          : {
+              to: '/workspaces/$workspaceId/connections/meta' as const,
+              params: { workspaceId: id },
+            };
   const rowClass =
     'group flex h-11 w-[284px] items-center gap-3 rounded-2xl px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white focus-on-dark';
 

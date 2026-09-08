@@ -15,9 +15,9 @@ import { queryKeys } from '@/src/lib/query-keys';
 import { demoApi } from '@/src/lib/demo-api';
 import type { Workspace } from '@/src/lib/types';
 
-type Section = 'home' | 'performance' | 'stage';
+type Section = 'home' | 'performance' | 'stage' | 'hub';
 
-const routeFor = (section: Section | 'hub', workspaceId: string) => {
+const routeFor = (section: Section, workspaceId: string) => {
   if (section === 'home')
     return {
       to: '/workspaces/$workspaceId/overview' as const,
@@ -42,7 +42,7 @@ function NavLink({
   workspaceId,
 }: {
   label: string;
-  section: Section | 'hub';
+  section: Section;
   workspaceId: string;
 }) {
   const matchRoute = useMatchRoute();
@@ -67,7 +67,15 @@ function NavLink({
               params: { workspaceId },
               fuzzy: true,
             };
-  const active = Boolean(matchRoute(matcher));
+  const active =
+    Boolean(matchRoute(matcher)) ||
+    (section === 'hub' &&
+      Boolean(
+        matchRoute({
+          to: '/workspaces/$workspaceId/connections/meta',
+          params: { workspaceId },
+        }),
+      ));
 
   return (
     <Link

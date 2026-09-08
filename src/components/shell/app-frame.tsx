@@ -8,7 +8,7 @@ export function AppFrame({
   children,
 }: {
   workspaceId: string;
-  section: 'home' | 'performance' | 'stage';
+  section: 'home' | 'performance' | 'stage' | 'hub';
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);

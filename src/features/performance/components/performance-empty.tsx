@@ -57,13 +57,22 @@ export function PerformanceEmpty({ workspaceId }: { workspaceId: string }) {
         Connect an ad account or launch a draft to turn live delivery data into
         clear, controlled actions.
       </p>
-      <Link
-        to="/workspaces/$workspaceId/performance/launch"
-        params={{ workspaceId }}
-        className="mt-6 grid h-9 min-w-[170px] place-items-center rounded-[18px] bg-[#ffe243] px-5 text-[15px] font-semibold text-[#181d27] transition-colors hover:bg-[#fdcf12]"
-      >
-        Launch a draft
-      </Link>
+      <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <Link
+          to="/workspaces/$workspaceId/connections/meta"
+          params={{ workspaceId }}
+          className="grid h-9 min-w-[170px] place-items-center rounded-[18px] bg-[#161616] px-5 text-[15px] font-semibold text-white transition-colors hover:bg-[#2e2e2e]"
+        >
+          Connect Meta Ads
+        </Link>
+        <Link
+          to="/workspaces/$workspaceId/performance/launch"
+          params={{ workspaceId }}
+          className="grid h-9 min-w-[170px] place-items-center rounded-[18px] bg-[#ffe243] px-5 text-[15px] font-semibold text-[#181d27] transition-colors hover:bg-[#fdcf12]"
+        >
+          Launch a draft
+        </Link>
+      </div>
     </div>
   );
 }

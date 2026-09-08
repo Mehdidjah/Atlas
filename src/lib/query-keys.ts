@@ -14,5 +14,7 @@ export const queryKeys = {
     ['activity', workspaceId, demo] as const,
   context: (workspaceId: string) => ['business-context', workspaceId] as const,
   stage: (workspaceId: string) => ['stage', workspaceId] as const,
+  metaConnection: (workspaceId: string) =>
+    ['meta-connection', workspaceId] as const,
   gateways: ['gateways'] as const,
 };

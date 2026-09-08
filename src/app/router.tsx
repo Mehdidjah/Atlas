@@ -17,6 +17,11 @@ const demoSearchSchema = z.object({
   demo: z.enum(['empty', 'populated']).optional(),
 });
 
+const metaConnectionSearchSchema = z.object({
+  meta: z.enum(['connected', 'cancelled', 'error']).optional(),
+  reason: z.string().max(80).optional(),
+});
+
 const performanceSearchSchema = z.object({
   range: z.enum(['7d', '30d', '90d']).optional(),
   compare: z.enum(['previous', 'year']).optional(),
@@ -163,6 +168,16 @@ const hubRoute = createRoute({
   ),
 });
 
+const metaConnectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workspaces/$workspaceId/connections/meta',
+  validateSearch: (search) => metaConnectionSearchSchema.parse(search),
+  component: lazyRouteComponent(
+    () => import('@/src/features/connections/meta-connection-page'),
+    'MetaConnectionPage',
+  ),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   homeRoute,
@@ -174,6 +189,7 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   stageRoute,
   hubRoute,
+  metaConnectionRoute,
 ]);
 
 export const router = createRouter({

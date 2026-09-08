@@ -79,21 +79,18 @@ export function HomeSidebar({
           <BookOpenText className="size-4" />
           Business context
         </button>
-        <button
+        <Link
+          to="/workspaces/$workspaceId/connections/meta"
+          params={{ workspaceId }}
           className={navClass}
-          onClick={() =>
-            toast('Meta Ads MCP demo', {
-              description:
-                'Connect a production Meta app in the backend to enable account actions.',
-            })
-          }
+          onClick={onNavigate}
         >
           <Bot className="size-4" />
-          Meta Ads MCP{' '}
+          Meta Ads connection{' '}
           <span className="ml-auto rounded-full bg-[#e5efff] px-2 py-0.5 text-[11px] font-semibold text-[#295a9f]">
             Beta
           </span>
-        </button>
+        </Link>
       </nav>
       <div className="mb-2 mt-4 px-4 text-[12px] font-semibold leading-[15px] tracking-[.02em] text-[#636363]">
         Chats
