@@ -8,6 +8,7 @@ import {
   redirect,
 } from '@tanstack/react-router';
 import { z } from 'zod';
+import { safeAuthReturnTo } from '@/src/lib/auth-api';
 import {
   PageSkeleton,
   QueryError,
@@ -23,11 +24,20 @@ const metaConnectionSearchSchema = z.object({
 });
 
 const authSearchSchema = z.object({
-  returnTo: z
+  returnTo: z.string().transform(safeAuthReturnTo).optional(),
+  authError: z.string().max(100).optional(),
+  error: z.string().max(100).optional(),
+  reason: z.string().max(100).optional(),
+  provider: z.enum(['google', 'facebook']).optional(),
+  auth: z.string().max(80).optional(),
+});
+
+const connectionSearchSchema = z.object({
+  workspaceId: z
     .string()
-    .max(500)
-    .refine((value) => value.startsWith('/') && !value.startsWith('//'))
+    .regex(/^[a-zA-Z0-9_-]{1,80}$/)
     .optional(),
+  setup: z.boolean().optional(),
 });
 
 const performanceSearchSchema = z.object({
@@ -80,10 +90,7 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({
-      to: '/workspaces/$workspaceId/overview',
-      params: { workspaceId: 'demo' },
-    });
+    throw redirect({ to: '/sign-in' });
   },
 });
 
@@ -123,7 +130,17 @@ const chatRoute = createRoute({
   validateSearch: (search) => demoSearchSchema.parse(search),
   component: lazyRouteComponent(
     () => import('@/src/features/home/home-page'),
-    'HomePage',
+    'AssistantPage',
+  ),
+});
+
+const assistantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workspaces/$workspaceId/assistant',
+  validateSearch: (search) => demoSearchSchema.parse(search),
+  component: lazyRouteComponent(
+    () => import('@/src/features/home/home-page'),
+    'AssistantPage',
   ),
 });
 
@@ -190,6 +207,17 @@ const stageRoute = createRoute({
 const hubRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/hub',
+  validateSearch: (search) => connectionSearchSchema.parse(search),
+  component: lazyRouteComponent(
+    () => import('@/src/features/hub/hub-page'),
+    'HubPage',
+  ),
+});
+
+const connectionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workspaces/$workspaceId/connections',
+  validateSearch: (search) => connectionSearchSchema.parse(search),
   component: lazyRouteComponent(
     () => import('@/src/features/hub/hub-page'),
     'HubPage',
@@ -212,6 +240,7 @@ const routeTree = rootRoute.addChildren([
   signUpRoute,
   homeRoute,
   chatRoute,
+  assistantRoute,
   performanceRoute,
   rulesRoute,
   analyzeRoute,
@@ -219,6 +248,7 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   stageRoute,
   hubRoute,
+  connectionsRoute,
   metaConnectionRoute,
 ]);
 

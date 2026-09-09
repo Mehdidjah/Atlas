@@ -1,6 +1,11 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams, useSearch } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from '@tanstack/react-router';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Building2,
@@ -32,40 +37,44 @@ import {
 import { AppFrame } from '@/src/components/shell/app-frame';
 import { queryKeys } from '@/src/lib/query-keys';
 import { metaApi } from '@/src/lib/meta-api';
+import { useWorkspaceJourney } from './use-workspace-journey';
+import type { MetaConnectionStatus } from '@/src/lib/types';
+import {
+  callbackMessage,
+  errorMessage,
+  isAuthenticationRequired,
+  isTokenExpiredError,
+  metaReturnTo,
+  useConnectionState,
+} from './connection-state';
 
 const permissionCopy: Record<string, string> = {
   ads_read: 'Read campaign delivery, spend, results, and Ads Insights reports.',
-  ads_management: 'Create, edit, launch, pause, and manage ads and campaigns.',
+  ads_management:
+    'Allow ad management access. This setup does not publish or change campaigns.',
   business_management:
     'Discover ad accounts granted through the user’s Meta Business Portfolio.',
 };
 
-const callbackMessages: Record<string, { title: string; detail: string }> = {
-  connected: {
-    title: 'Meta Ads connected',
-    detail: 'Your accessible ad accounts have been securely imported.',
-  },
-  cancelled: {
-    title: 'Connection cancelled',
-    detail:
-      'Nothing was changed. You can restart the Meta authorization anytime.',
-  },
-  error: {
-    title: 'Meta could not be connected',
-    detail: 'Review the app setup and permissions, then try again.',
-  },
-};
+const formatDate = (value: number | null) =>
+  value === null || !Number.isFinite(value)
+    ? 'Not provided'
+    : new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(value));
 
-const formatDate = (value: number | null) => {
-  if (!value) return 'Not provided';
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
-};
-
-const getMutationMessage = (error: unknown) =>
-  error instanceof Error ? error.message : 'Please try again.';
+function SignInLink({ workspaceId }: { workspaceId: string }) {
+  return (
+    <Link
+      to="/sign-in"
+      search={{ returnTo: metaReturnTo(workspaceId) }}
+      className="inline-flex h-10 items-center justify-center rounded-full bg-[#161616] px-5 font-semibold text-white hover:bg-[#2e2e2e]"
+    >
+      Sign in to Aster
+    </Link>
+  );
+}
 
 function PageHeader({ workspaceId }: { workspaceId: string }) {
   return (
@@ -84,8 +93,8 @@ function PageHeader({ workspaceId }: { workspaceId: string }) {
             Meta Ads connection
           </h1>
           <p className="mt-1 max-w-2xl text-[16px] leading-6 text-[#636363]">
-            Let each signed-in user authorize their own Meta account and choose
-            which ad accounts Aster can operate in this workspace.
+            Authorize your Meta account and choose the ad accounts for this
+            workspace. Meta permissions are separate from your Aster sign-in.
           </p>
         </div>
         <span className="mt-2 hidden size-12 place-items-center rounded-2xl bg-[#e9f0ff] text-[#1877f2] sm:grid">
@@ -96,6 +105,64 @@ function PageHeader({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+function isSafeRedirectUri(value: string) {
+  try {
+    if (!/^https?:\/\//i.test(value)) return false;
+    const url = new URL(value);
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    return (
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      (url.protocol === 'https:' || (url.protocol === 'http:' && loopback))
+    );
+  } catch {
+    return false;
+  }
+}
+
+const accountStatusLabel = (status: number | null) =>
+  ({
+    1: 'Active',
+    2: 'Disabled',
+    3: 'Unsettled',
+    7: 'Pending risk review',
+    8: 'Pending settlement',
+    9: 'In grace period',
+    100: 'Pending closure',
+    101: 'Closed',
+  })[status ?? -1] ??
+  (status == null ? 'Status unknown' : `Unknown status (${status})`);
+
+function CreateAccountCard({ workspaceId }: { workspaceId: string }) {
+  return (
+    <section className="rounded-3xl border border-[#e0e0e0] bg-white p-6 surface-shadow md:p-8">
+      <span className="inline-flex items-center gap-2 rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px] font-semibold text-[#636363]">
+        Step 1 · Aster account
+      </span>
+      <h2 className="mt-5 text-[26px] font-semibold tracking-[-.02em]">
+        Create or continue with Aster
+      </h2>
+      <p className="mt-2 max-w-2xl text-[16px] leading-6 text-[#636363]">
+        Use Google or Facebook to create or reuse your Aster identity. Next,
+        you’ll authorize Meta Ads separately and choose the ad accounts for your
+        workspace.
+      </p>
+      <Link
+        to="/sign-up"
+        search={{ returnTo: metaReturnTo(workspaceId) }}
+        className="mt-7 inline-flex h-12 items-center gap-2 rounded-full bg-[#161616] px-6 text-[16px] font-semibold text-white hover:bg-[#2e2e2e]"
+      >
+        Create or continue with Aster
+      </Link>
+      <p className="mt-3 text-[12px] text-[#7b7b7b]">
+        Already have an account? The same provider sign-in reuses it. Connecting
+        does not publish ads or spend money.
+      </p>
+    </section>
+  );
+}
+
 function SetupCard({
   redirectUri,
   permissions,
@@ -103,9 +170,17 @@ function SetupCard({
   redirectUri: string;
   permissions: string[];
 }) {
+  const canCopyRedirect = isSafeRedirectUri(redirectUri);
   const copyRedirect = async () => {
-    await navigator.clipboard.writeText(redirectUri);
-    toast.success('Redirect URI copied');
+    if (!canCopyRedirect) return;
+    try {
+      await navigator.clipboard.writeText(redirectUri);
+      toast.success('Redirect URI copied');
+    } catch {
+      toast.error('Could not copy', {
+        description: 'Select and copy the redirect URI manually.',
+      });
+    }
   };
   return (
     <section className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
@@ -114,55 +189,78 @@ function SetupCard({
           <KeyRound className="size-5" />
         </div>
         <h2 className="mt-5 text-[24px] font-semibold tracking-[-.02em]">
-          Configure your Meta app first
+          Meta authorization is unavailable
         </h2>
         <p className="mt-2 max-w-2xl leading-6 text-[#636363]">
-          The OAuth backend is ready, but this deployment still needs its Meta
-          App ID, App Secret, and a 32-byte token-encryption key as protected
-          runtime values.
+          Step 2 · Authorize Meta Ads. This step is unavailable in this
+          environment. Ask your administrator to enable it, then check again.
+          You do not need to enter any credentials here.
         </p>
-        <ol className="mt-6 grid gap-4">
-          {[
-            'Create a Business app in Meta for Developers and add Facebook Login for Business.',
-            'Add the exact redirect URI below to Valid OAuth Redirect URIs.',
-            'Configure the three permissions and request Advanced Access during App Review.',
-            'Set META_APP_ID, META_APP_SECRET, and META_TOKEN_ENCRYPTION_KEY in the deployment.',
-          ].map((item, index) => (
-            <li key={item} className="flex gap-3">
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#161616] text-[12px] font-semibold text-white">
-                {index + 1}
-              </span>
-              <span className="pt-0.5 leading-5">{item}</span>
-            </li>
-          ))}
-        </ol>
-        <div className="mt-6 rounded-2xl bg-[#f5f7fb] p-4">
-          <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-[#636363]">
-            Valid OAuth redirect URI
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-[#303030]">
-              {redirectUri}
-            </code>
-            <button
-              type="button"
-              onClick={() => void copyRedirect()}
-              aria-label="Copy redirect URI"
-              className="grid size-9 shrink-0 place-items-center rounded-full bg-white text-[#636363] shadow-sm hover:text-[#161616]"
-            >
-              <Copy className="size-4" />
-            </button>
-          </div>
-        </div>
-        <a
-          href="https://developers.facebook.com/apps/"
-          target="_blank"
-          rel="noreferrer"
-          className="mt-6 inline-flex h-11 items-center gap-2 rounded-full bg-[#1877f2] px-5 font-semibold text-white hover:bg-[#1268d8]"
+        <button
+          type="button"
+          disabled
+          className="mt-6 inline-flex h-11 items-center rounded-full bg-[#161616] px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Open Meta for Developers
-          <ExternalLink className="size-4" />
-        </a>
+          Authorize Meta Ads · Unavailable
+        </button>
+        <details className="mt-6 rounded-2xl bg-[#f8f8f8] p-4 text-[13px]">
+          <summary className="cursor-pointer font-semibold">
+            Administrator setup checklist
+          </summary>
+          <p className="mt-3 leading-5 text-[#636363]">
+            Review these requirements; this page cannot identify which
+            configuration item is missing. Never enter or share secrets here.
+          </p>
+          <ol className="mt-6 grid gap-4">
+            {[
+              'Create a Business app in Meta for Developers and add Facebook Login for Business.',
+              'Add the exact redirect URI below to Valid OAuth Redirect URIs.',
+              'Configure the permissions shown here and obtain the required Meta approval for your users.',
+              'Set META_APP_ID, META_APP_SECRET, and META_TOKEN_ENCRYPTION_KEY server-side, deploy the OAuth Worker, and apply database migrations.',
+            ].map((item, index) => (
+              <li key={item} className="flex gap-3">
+                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#161616] text-[12px] font-semibold text-white">
+                  {index + 1}
+                </span>
+                <span className="pt-0.5 leading-5">{item}</span>
+              </li>
+            ))}
+          </ol>
+          {canCopyRedirect ? (
+            <div className="mt-6 rounded-2xl bg-[#f5f7fb] p-4">
+              <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-[#636363]">
+                Valid OAuth redirect URI
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-[#303030]">
+                  {redirectUri}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copyRedirect()}
+                  aria-label="Copy redirect URI"
+                  className="grid size-9 shrink-0 place-items-center rounded-full bg-white text-[#636363] shadow-sm hover:text-[#161616]"
+                >
+                  <Copy className="size-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-[#636363]">
+              No valid redirect URL is available. Check the server’s public
+              OAuth callback URL before configuring Meta.
+            </p>
+          )}
+          <a
+            href="https://developers.facebook.com/apps/"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-6 inline-flex h-11 items-center gap-2 rounded-full bg-[#161616] px-5 font-semibold text-white hover:bg-[#2e2e2e]"
+          >
+            Open Meta for Developers
+            <ExternalLink className="size-4" />
+          </a>
+        </details>
       </div>
       <div className="rounded-3xl bg-[#161616] p-6 text-white md:p-8">
         <div className="text-[12px] font-semibold uppercase tracking-[.08em] text-white/45">
@@ -209,14 +307,15 @@ function DisconnectedCard({
           <div>
             <span className="inline-flex items-center gap-2 rounded-full bg-[#f2f2f2] px-3 py-1 text-[12px] font-semibold text-[#636363]">
               <span className="size-2 rounded-full bg-[#9e9e9e]" />
-              Not connected
+              Step 2 · Authorize Meta Ads
             </span>
             <h2 className="mt-5 text-[26px] font-semibold tracking-[-.02em]">
-              Connect your Meta ad accounts
+              Authorize Meta, then choose accounts
             </h2>
             <p className="mt-2 max-w-2xl text-[16px] leading-6 text-[#636363]">
               You’ll sign in on Meta, approve the requested access, then return
-              here to choose the ad accounts Aster should monitor and manage.
+              here to choose the ad accounts to save for this workspace. This
+              does not launch ads or start live campaign synchronization.
             </p>
           </div>
           <span className="hidden size-12 shrink-0 place-items-center rounded-2xl bg-[#e9f0ff] text-[#1877f2] sm:grid">
@@ -225,9 +324,9 @@ function DisconnectedCard({
         </div>
         <a
           href={metaApi.connectUrl(workspaceId)}
-          className="mt-7 inline-flex h-12 items-center gap-2 rounded-full bg-[#1877f2] px-6 text-[16px] font-semibold text-white hover:bg-[#1268d8]"
+          className="mt-7 inline-flex h-12 items-center gap-2 rounded-full bg-[#161616] px-6 text-[16px] font-semibold text-white hover:bg-[#2e2e2e]"
         >
-          Continue with Meta
+          Authorize Meta Ads
           <ExternalLink className="size-4" />
         </a>
         <p className="mt-3 text-[12px] text-[#7b7b7b]">
@@ -246,7 +345,8 @@ function DisconnectedCard({
               <div>
                 <code className="font-semibold">{permission}</code>
                 <p className="mt-1 text-[13px] leading-[18px] text-[#636363]">
-                  {permissionCopy[permission]}
+                  {permissionCopy[permission] ??
+                    'Review this permission on the Facebook authorization screen.'}
                 </p>
               </div>
             </div>
@@ -260,11 +360,14 @@ function DisconnectedCard({
 function ConnectedView({
   workspaceId,
   data,
+  checking,
 }: {
   workspaceId: string;
-  data: Awaited<ReturnType<typeof metaApi.status>>;
+  data: MetaConnectionStatus;
+  checking: boolean;
 }) {
   const queryClient = useQueryClient();
+  const state = useConnectionState(data);
   const initialSelection = useMemo(
     () =>
       data.accounts
@@ -272,55 +375,76 @@ function ConnectedView({
         .map((account) => account.metaAccountId),
     [data.accounts],
   );
-  const [selected, setSelected] = useState<string[]>(initialSelection);
-
-  const invalidate = () =>
-    queryClient.invalidateQueries({
-      queryKey: queryKeys.metaConnection(workspaceId),
-    });
-
+  const [selected, setSelected] = useState(initialSelection);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [mutationError, setMutationError] = useState<unknown>(null);
+  const dirty =
+    selected.length !== initialSelection.length ||
+    selected.some((id) => !initialSelection.includes(id));
+  const refetch = () =>
+    queryClient.invalidateQueries(
+      { queryKey: queryKeys.metaConnection(workspaceId) },
+      { throwOnError: true },
+    );
+  const onError = (error: unknown) => {
+    setMutationError(error);
+    if (isTokenExpiredError(error))
+      queryClient.setQueryData<MetaConnectionStatus>(
+        queryKeys.metaConnection(workspaceId),
+        (current) =>
+          current?.connection
+            ? {
+                ...current,
+                connection: { ...current.connection, status: 'expired' },
+              }
+            : current,
+      );
+  };
   const save = useMutation({
-    mutationFn: () => metaApi.selectAccounts(workspaceId, selected),
+    mutationFn: (accountIds: string[]) =>
+      metaApi.selectAccounts(workspaceId, accountIds),
+    onMutate: () => setMutationError(null),
     onSuccess: async () => {
-      await invalidate();
-      toast.success('Ad account access saved');
+      await refetch();
+      toast.success('Ad account selection saved');
     },
-    onError: (error) =>
-      toast.error('Could not save', { description: getMutationMessage(error) }),
+    onError,
   });
   const refresh = useMutation({
     mutationFn: () => metaApi.refresh(workspaceId),
-    onSuccess: async (result) => {
-      await invalidate();
-      toast.success('Meta accounts refreshed', {
-        description: `${result.accountCount} ad account${result.accountCount === 1 ? '' : 's'} found.`,
+    onMutate: () => setMutationError(null),
+    onSuccess: async () => {
+      await refetch();
+      toast.success('Ad account list refreshed', {
+        description: 'This updates the account list only, not campaign data.',
       });
     },
-    onError: (error) =>
-      toast.error('Refresh failed', { description: getMutationMessage(error) }),
+    onError,
   });
   const disconnect = useMutation({
     mutationFn: () => metaApi.disconnect(workspaceId),
-    onSuccess: async () => {
-      await invalidate();
-      toast.success('Meta Ads disconnected', {
-        description:
-          'Stored authorization and imported account records were removed.',
+    onMutate: () => setMutationError(null),
+    onSuccess: async (result) => {
+      await refetch();
+      setDisconnectOpen(false);
+      toast.success('Meta connection removed', {
+        description: result?.revokedAtMeta
+          ? 'Meta app permission was also revoked. Other Aster workspaces may need to reconnect.'
+          : result
+            ? 'Aster removed the connection. Meta permission revocation was not confirmed; review Aster in your Facebook app settings.'
+            : 'No stored connection remains in this workspace.',
       });
     },
-    onError: (error) =>
-      toast.error('Disconnect failed', {
-        description: getMutationMessage(error),
-      }),
+    onError,
   });
-
+  const pending = save.isPending || refresh.isPending || disconnect.isPending;
+  const authRequired = isAuthenticationRequired(mutationError);
+  const active = state.active && !isTokenExpiredError(mutationError);
+  const blocked = pending || checking || authRequired;
   const connection = data.connection;
   if (!connection) return null;
   const selectedSet = new Set(selected);
-  const dirty =
-    selected.length !== initialSelection.length ||
-    selected.some((accountId) => !initialSelection.includes(accountId));
-  const expired = connection.status === 'expired';
+  const accessUnavailable = !active;
 
   return (
     <div className="grid gap-5">
@@ -328,12 +452,18 @@ function ConnectedView({
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div>
             <span
-              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[12px] font-semibold ${expired ? 'bg-[#fff0ef] text-[#a52b27]' : 'bg-[#def4e7] text-[#287a4b]'}`}
+              className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[12px] font-semibold ${accessUnavailable ? 'bg-[#fff0ef] text-[#a52b27]' : 'bg-[#def4e7] text-[#287a4b]'}`}
             >
               <span
-                className={`size-2 rounded-full ${expired ? 'bg-[#cd2823]' : 'bg-[#45b97c]'}`}
+                className={`size-2 rounded-full ${accessUnavailable ? 'bg-[#cd2823]' : 'bg-[#45b97c]'}`}
               />
-              {expired ? 'Reconnect required' : 'Connected'}
+              {!data.configured
+                ? 'Authorization unavailable'
+                : accessUnavailable
+                  ? 'Reconnect required'
+                  : initialSelection.length
+                    ? 'Ad-account selection saved'
+                    : 'Choose ad accounts'}
             </span>
             <h2 className="mt-4 text-[26px] font-semibold tracking-[-.02em]">
               {connection.metaUserName || 'Meta user'}
@@ -346,20 +476,24 @@ function ConnectedView({
             <button
               type="button"
               onClick={() => refresh.mutate()}
-              disabled={refresh.isPending || expired}
+              disabled={blocked || accessUnavailable || dirty}
               className="inline-flex h-10 items-center gap-2 rounded-full border border-[#d6d6d6] px-4 font-semibold hover:bg-[#f2f2f2] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw
                 className={`size-4 ${refresh.isPending ? 'animate-spin' : ''}`}
               />
-              Refresh
+              {refresh.isPending ? 'Refreshing…' : 'Refresh'}
             </button>
-            <a
-              href={metaApi.connectUrl(workspaceId)}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-[#161616] px-4 font-semibold text-white hover:bg-[#2e2e2e]"
+            <button
+              type="button"
+              disabled={blocked || dirty || !data.configured}
+              onClick={() =>
+                window.location.assign(metaApi.connectUrl(workspaceId))
+              }
+              className="inline-flex h-10 items-center gap-2 rounded-full bg-[#161616] px-4 font-semibold text-white hover:bg-[#2e2e2e] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {expired ? 'Reconnect' : 'Reauthorize'}
-            </a>
+              Authorize Meta Ads
+            </button>
           </div>
         </div>
         <div className="mt-6 grid gap-3 border-t border-[#ededed] pt-5 sm:grid-cols-3">
@@ -373,7 +507,7 @@ function ConnectedView({
           </div>
           <div>
             <div className="text-[12px] font-semibold text-[#7b7b7b]">
-              LAST SYNC
+              ACCOUNT LIST UPDATED
             </div>
             <div className="mt-1 text-[14px] font-semibold">
               {formatDate(connection.lastSyncedAt)}
@@ -390,27 +524,99 @@ function ConnectedView({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-3xl border border-[#e0e0e0] bg-white surface-shadow">
+      {mutationError ? (
+        <div
+          role="alert"
+          className="rounded-2xl border border-[#f0d3d1] bg-[#fff7f6] p-4 text-[13px] leading-5 text-[#a52b27]"
+        >
+          <p>{errorMessage(mutationError)}</p>
+          {!authRequired ? (
+            <p className="mt-2">
+              {isTokenExpiredError(mutationError)
+                ? 'Authorize Meta Ads again to renew access. Discard unsaved changes first if needed.'
+                : 'Your selection has not been confirmed. Retry the failed action; if access changed, discard unsaved changes, refresh the account list, or authorize Meta Ads again.'}
+            </p>
+          ) : null}
+          {authRequired ? (
+            <div className="mt-3">
+              <SignInLink workspaceId={workspaceId} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <section
+        aria-busy={pending || checking}
+        className="overflow-hidden rounded-3xl border border-[#e0e0e0] bg-white surface-shadow"
+      >
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#ededed] px-6 py-5 md:px-8">
           <div>
             <h2 className="text-[21px] font-semibold">Ad account access</h2>
             <p className="mt-1 text-[13px] text-[#636363]">
-              Only selected accounts will be available to dashboards and the AI
-              agent.
+              Choose ad accounts and save the selection for this workspace. This
+              does not enable live reporting or publishing.
             </p>
           </div>
-          <button
-            type="button"
-            disabled={!dirty || save.isPending}
-            onClick={() => save.mutate()}
-            className="inline-flex h-10 min-w-[130px] items-center justify-center gap-2 rounded-full bg-[#161616] px-4 font-semibold text-white hover:bg-[#2e2e2e] disabled:cursor-not-allowed disabled:opacity-35"
-          >
-            {save.isPending ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : null}
-            Save access
-          </button>
+          {!dirty && selected.length > 0 && active && !blocked ? (
+            <Link
+              to="/workspaces/$workspaceId/performance"
+              params={{ workspaceId }}
+              className="inline-flex h-10 min-w-[130px] items-center justify-center gap-2 rounded-full bg-[#161616] px-4 font-semibold text-white hover:bg-[#2e2e2e]"
+            >
+              Open campaigns
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled={
+                blocked || accessUnavailable || !dirty || selected.length === 0
+              }
+              onClick={() => save.mutate([...selected])}
+              className="inline-flex h-10 min-w-[130px] items-center justify-center gap-2 rounded-full bg-[#161616] px-4 font-semibold text-white hover:bg-[#2e2e2e] disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              {save.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : null}
+              {save.isPending
+                ? 'Saving…'
+                : selected.length === 0
+                  ? 'Select an account'
+                  : dirty
+                    ? 'Save ad accounts'
+                    : active
+                      ? 'Open campaigns'
+                      : 'Authorization required'}
+            </button>
+          )}
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#ededed] px-6 py-3 text-[12px] text-[#636363] md:px-8">
+          <output aria-live="polite">
+            {selected.length} selected ·{' '}
+            {dirty
+              ? selected.length
+                ? 'Unsaved changes. Save or discard before refreshing or reauthorizing.'
+                : 'Select at least one account, or discard your changes.'
+              : accessUnavailable
+                ? 'Authorization is unavailable. Reauthorize when enabled to edit access.'
+                : initialSelection.length
+                  ? 'Ad-account selection saved. Refresh updates the account list only.'
+                  : 'Choose at least one account to continue.'}
+          </output>
+          {dirty ? (
+            <button
+              type="button"
+              disabled={blocked}
+              onClick={() => setSelected(initialSelection)}
+              className="font-semibold text-[#161616] underline underline-offset-4 disabled:opacity-50"
+            >
+              Discard changes
+            </button>
+          ) : null}
+        </div>
+        <p className="border-b border-[#ededed] px-6 py-3 text-[12px] leading-5 text-[#636363] md:px-8">
+          Account status is reported by Meta. Inactive or unknown accounts may
+          still provide readable history; selecting an account does not
+          establish eligibility to publish.
+        </p>
         {data.accounts.length ? (
           <div className="divide-y divide-[#ededed]">
             {data.accounts.map((account) => {
@@ -423,6 +629,8 @@ function ConnectedView({
                   <input
                     type="checkbox"
                     checked={checked}
+                    disabled={blocked || accessUnavailable}
+                    aria-label={`Select ${account.name}, ${account.metaAccountId}`}
                     onChange={() =>
                       setSelected((current) =>
                         checked
@@ -430,7 +638,7 @@ function ConnectedView({
                           : [...current, account.metaAccountId],
                       )
                     }
-                    className="size-4 accent-[#161616]"
+                    className="size-4 accent-[#161616] disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e9f0ff] text-[#1877f2]">
                     <Building2 className="size-4" />
@@ -442,16 +650,18 @@ function ConnectedView({
                     <span className="mt-0.5 block truncate text-[12px] text-[#7b7b7b]">
                       {account.businessName || 'Personal ad account'} ·{' '}
                       {account.metaAccountId}
+                      <span className="sm:hidden">
+                        {' '}
+                        · {accountStatusLabel(account.accountStatus)}
+                      </span>
                     </span>
                   </span>
                   <span className="hidden text-right sm:block">
                     <span className="block text-[13px] font-semibold">
-                      {account.currency || '—'}
+                      {account.currency || 'Not provided'}
                     </span>
                     <span className="block text-[12px] text-[#7b7b7b]">
-                      {account.accountStatus === 1
-                        ? 'Active'
-                        : `Status ${account.accountStatus ?? 'unknown'}`}
+                      {accountStatusLabel(account.accountStatus)}
                     </span>
                   </span>
                 </label>
@@ -465,8 +675,9 @@ function ConnectedView({
               No accessible ad accounts found
             </h3>
             <p className="mx-auto mt-1 max-w-md text-[13px] leading-5 text-[#636363]">
-              Confirm that this Meta user has access to an ad account, then
-              refresh or reauthorize.
+              Confirm that this Meta user has access to an ad account, then use
+              Refresh above. If none appear, use Authorize Meta Ads to review
+              your permissions with the correct Meta user.
             </p>
           </div>
         )}
@@ -476,15 +687,23 @@ function ConnectedView({
         <div>
           <h2 className="font-semibold">Disconnect Meta Ads</h2>
           <p className="mt-1 text-[13px] text-[#7b5552]">
-            Revoke Meta permissions and delete the encrypted token and imported
-            account records.
+            Remove this workspace’s connection and attempt to revoke Meta app
+            access. Revocation can affect other workspaces using the same
+            Facebook user.
           </p>
         </div>
-        <AlertDialog>
+        <AlertDialog
+          open={disconnectOpen}
+          onOpenChange={(open) => {
+            if (!disconnect.isPending) setDisconnectOpen(open);
+          }}
+        >
           <AlertDialogTrigger
             render={
               <button
                 aria-label="Disconnect Meta Ads"
+                type="button"
+                disabled={blocked}
                 className="inline-flex h-10 items-center gap-2 rounded-full border border-[#dca8a5] px-4 font-semibold text-[#a52b27] hover:bg-[#fff0ef]"
               />
             }
@@ -499,17 +718,25 @@ function ConnectedView({
               </AlertDialogMedia>
               <AlertDialogTitle>Disconnect Meta Ads?</AlertDialogTitle>
               <AlertDialogDescription>
-                Aster will remove this authorization and all imported ad account
-                records for this workspace. You can reconnect later.
+                Aster will remove this authorization and imported ad account
+                records for this workspace. It also attempts to revoke Aster’s
+                app permission at Meta, which can affect other workspaces
+                connected with the same Facebook user. Those workspaces may need
+                to reconnect.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {disconnect.isError ? (
+              <p role="alert" className="text-[13px] text-[#a52b27]">
+                {errorMessage(disconnect.error)}
+              </p>
+            ) : null}
             <AlertDialogFooter>
               <AlertDialogCancel disabled={disconnect.isPending}>
                 Keep connected
               </AlertDialogCancel>
               <button
                 type="button"
-                disabled={disconnect.isPending}
+                disabled={pending || authRequired || checking}
                 onClick={() => disconnect.mutate()}
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#cd2823] px-4 font-semibold text-white hover:bg-[#b7221e] disabled:opacity-50"
               >
@@ -527,91 +754,169 @@ function ConnectedView({
 }
 
 export function MetaConnectionPage() {
-  const { workspaceId } = useParams({
+  const { workspaceId: requestedWorkspaceId } = useParams({
     from: '/workspaces/$workspaceId/connections/meta',
   });
   const search = useSearch({
     from: '/workspaces/$workspaceId/connections/meta',
   });
-  const query = useQuery({
-    queryKey: queryKeys.metaConnection(workspaceId),
-    queryFn: ({ signal }) => metaApi.status(workspaceId, signal),
-  });
-  const callback = search.meta ? callbackMessages[search.meta] : null;
-
+  const navigate = useNavigate();
+  const journey = useWorkspaceJourney(requestedWorkspaceId);
+  const {
+    sessionQuery,
+    metaQuery: query,
+    connectionWorkspaceId: workspaceId,
+  } = journey;
+  const [callback, setCallback] = useState(() =>
+    callbackMessage(search.meta, search.reason),
+  );
+  useEffect(() => {
+    if (sessionQuery.isPending || sessionQuery.isError) return;
+    if (!search.meta && !search.reason && workspaceId === requestedWorkspaceId)
+      return;
+    const message = callbackMessage(search.meta, search.reason);
+    void navigate({
+      to: '/workspaces/$workspaceId/connections/meta',
+      params: { workspaceId },
+      search: {},
+      replace: true,
+    }).then(() => {
+      if (message) setCallback(message);
+    });
+  }, [
+    navigate,
+    search.meta,
+    search.reason,
+    workspaceId,
+    requestedWorkspaceId,
+    sessionQuery.isPending,
+    sessionQuery.isError,
+  ]);
   return (
     <AppFrame workspaceId={workspaceId} section="hub">
       <div className="h-full overflow-y-auto bg-[#fbfbfb]">
         <PageHeader workspaceId={workspaceId} />
         <main className="mx-auto max-w-[1120px] px-6 py-7 md:px-10 md:py-10">
           {callback ? (
-            <output
-              className={`mb-5 flex gap-3 rounded-2xl border p-4 ${search.meta === 'error' ? 'border-[#f0d3d1] bg-[#fff7f6]' : search.meta === 'cancelled' ? 'border-[#eadfb9] bg-[#fffbee]' : 'border-[#cce7d6] bg-[#f5fcf8]'}`}
-            >
-              {search.meta === 'error' ? (
-                <TriangleAlert className="mt-0.5 size-5 shrink-0 text-[#cd2823]" />
-              ) : search.meta === 'cancelled' ? (
-                <Clock3 className="mt-0.5 size-5 shrink-0 text-[#8a6500]" />
-              ) : (
-                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[#287a4b]" />
-              )}
-              <div>
-                <div className="font-semibold">{callback.title}</div>
-                <div className="mt-0.5 text-[13px] text-[#636363]">
-                  {callback.detail}
-                  {search.reason ? ` Error code: ${search.reason}.` : ''}
-                </div>
+            <output className="mb-5 flex gap-3 rounded-2xl border border-[#eadfb9] bg-[#fffbee] p-4">
+              <Clock3 className="mt-0.5 size-5 shrink-0 text-[#8a6500]" />
+              <div className="flex-1 text-[13px] leading-5 text-[#636363]">
+                {callback}
               </div>
+              <button
+                type="button"
+                aria-label="Dismiss connection update"
+                onClick={() => setCallback(null)}
+                className="text-[12px] font-semibold text-[#636363] underline"
+              >
+                Dismiss
+              </button>
             </output>
           ) : null}
-
-          {query.isPending ? (
+          {journey.loading ? (
             <div className="grid min-h-[360px] place-items-center rounded-3xl border border-[#e0e0e0] bg-white">
               <div className="text-center text-[#636363]">
                 <LoaderCircle className="mx-auto size-6 animate-spin" />
-                <p className="mt-3">Checking Meta connection…</p>
+                <p className="mt-3">
+                  {sessionQuery.isPending
+                    ? 'Checking your Aster account…'
+                    : 'Checking Meta authorization…'}
+                </p>
               </div>
             </div>
-          ) : query.isError ? (
-            <div className="rounded-3xl border border-[#f0d3d1] bg-white p-8 text-center">
+          ) : sessionQuery.isError ? (
+            <div
+              className="rounded-3xl border border-[#f0d3d1] bg-white p-8 text-center"
+              role="alert"
+            >
               <TriangleAlert className="mx-auto size-8 text-[#cd2823]" />
               <h2 className="mt-4 text-[21px] font-semibold">
-                Could not load the connection
+                Could not check your Aster account
               </h2>
               <p className="mt-2 text-[#636363]">
-                {getMutationMessage(query.error)}
+                Check your session before continuing to Meta. Your saved
+                connection has not been changed.
               </p>
               <button
                 type="button"
-                onClick={() => void query.refetch()}
-                className="mt-5 h-10 rounded-full bg-[#161616] px-5 font-semibold text-white"
+                disabled={sessionQuery.isFetching}
+                onClick={() => void sessionQuery.refetch()}
+                className="mt-5 h-10 rounded-full bg-[#161616] px-5 font-semibold text-white disabled:opacity-50"
               >
-                Try again
+                {sessionQuery.isFetching ? 'Checking…' : 'Try again'}
               </button>
             </div>
-          ) : !query.data.configured ? (
-            <SetupCard
-              redirectUri={query.data.redirectUri}
-              permissions={query.data.requiredPermissions}
-            />
-          ) : query.data.connection ? (
-            <ConnectedView
-              key={query.data.connection.updatedAt}
-              workspaceId={workspaceId}
-              data={query.data}
-            />
+          ) : !journey.signedIn ? (
+            <CreateAccountCard workspaceId={workspaceId} />
+          ) : query.isError || !query.data ? (
+            <div
+              className="rounded-3xl border border-[#f0d3d1] bg-white p-8 text-center"
+              role="alert"
+            >
+              <TriangleAlert className="mx-auto size-8 text-[#cd2823]" />
+              <h2 className="mt-4 text-[21px] font-semibold">
+                {isTokenExpiredError(query.error)
+                  ? 'Meta authorization expired'
+                  : 'Could not load the connection'}
+              </h2>
+              <p className="mt-2 text-[#636363]">{errorMessage(query.error)}</p>
+              <p className="mt-2 text-[13px] text-[#636363]">
+                {isTokenExpiredError(query.error)
+                  ? 'Authorize Meta Ads again, then confirm your ad accounts.'
+                  : 'Try checking again. If access is still unavailable, ask your workspace administrator to review your access.'}
+              </p>
+              <div className="mt-5 flex flex-wrap justify-center gap-3">
+                <button
+                  type="button"
+                  disabled={query.isFetching}
+                  onClick={() => void query.refetch()}
+                  className="h-10 rounded-full bg-[#161616] px-5 font-semibold text-white disabled:opacity-50"
+                >
+                  {query.isFetching ? 'Checking…' : 'Try again'}
+                </button>
+                {isTokenExpiredError(query.error) ? (
+                  <a
+                    href={metaApi.connectUrl(workspaceId)}
+                    className="inline-flex h-10 items-center rounded-full bg-[#161616] px-5 font-semibold text-white"
+                  >
+                    Authorize Meta Ads
+                  </a>
+                ) : null}
+              </div>
+            </div>
           ) : (
-            <DisconnectedCard
-              workspaceId={workspaceId}
-              permissions={query.data.requiredPermissions}
-            />
+            <div className="grid gap-5">
+              {!query.data.configured ? (
+                <SetupCard
+                  redirectUri={query.data.redirectUri}
+                  permissions={query.data.requiredPermissions}
+                />
+              ) : null}
+              {query.data.connection ? (
+                <ConnectedView
+                  key={`${workspaceId}:${query.data.connection.id}:${query.data.connection.updatedAt}:${query.data.accounts
+                    .filter((account) => account.selected)
+                    .map((account) => account.metaAccountId)
+                    .sort()
+                    .join(',')}`}
+                  workspaceId={workspaceId}
+                  data={query.data}
+                  checking={query.isFetching}
+                />
+              ) : query.data.configured ? (
+                <DisconnectedCard
+                  workspaceId={workspaceId}
+                  permissions={query.data.requiredPermissions}
+                />
+              ) : null}
+            </div>
           )}
-
           <div className="mt-6 flex items-start gap-3 rounded-2xl bg-[#f1f3f6] p-4 text-[13px] leading-5 text-[#636363]">
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#287a4b]" />
-            Campaign-changing actions should still require explicit user
-            confirmation and be recorded in an audit log before the AI agent is
-            allowed to run them.
+            Saving ad-account selection does not enable live reporting, publish
+            ads, or spend money. Live reporting and publishing are not
+            implemented in this build. Campaigns offers an optional sample
+            preview.
           </div>
         </main>
       </div>
