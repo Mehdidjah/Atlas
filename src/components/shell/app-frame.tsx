@@ -47,7 +47,7 @@ export function AppFrame({
       {drawerOpen ? (
         <button
           aria-label="Close workspace drawer"
-          className="fixed bottom-0 left-[300px] right-0 top-12 z-10 hidden bg-black/10 lg:block"
+          className="fixed bottom-0 left-[300px] right-0 top-12 z-30 bg-black/10"
           onClick={() => setDrawerOpen(false)}
         />
       ) : null}

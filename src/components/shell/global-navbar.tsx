@@ -1,7 +1,6 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
-import { Bell, ChevronDown, Grid2X2, Menu, Settings } from 'lucide-react';
+import { Activity, ChevronDown, Grid2X2, Menu, Settings } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,9 +12,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { queryKeys } from '@/src/lib/query-keys';
 import { demoApi } from '@/src/lib/demo-api';
+import { authApi } from '@/src/lib/auth-api';
+import { isDemoWorkspace } from '@/src/lib/workspaces';
+import { AppTooltip } from '@/src/components/feedback/app-tooltip';
 import type { Workspace } from '@/src/lib/types';
 
 type Section = 'home' | 'performance' | 'stage' | 'hub';
+const sectionLabels: Record<Section, string> = {
+  home: 'Home',
+  performance: 'Campaigns',
+  stage: 'Creatives',
+  hub: 'Connections',
+};
 
 const routeFor = (section: Section, workspaceId: string) => {
   if (section === 'home')
@@ -33,7 +41,10 @@ const routeFor = (section: Section, workspaceId: string) => {
       to: '/workspaces/$workspaceId/stage' as const,
       params: { workspaceId },
     };
-  return { to: '/hub' as const, params: {} };
+  return {
+    to: '/workspaces/$workspaceId/connections/meta' as const,
+    params: { workspaceId },
+  };
 };
 
 function NavLink({
@@ -69,6 +80,20 @@ function NavLink({
             };
   const active =
     Boolean(matchRoute(matcher)) ||
+    (section === 'home' &&
+      Boolean(
+        matchRoute({
+          to: '/workspaces/$workspaceId/assistant',
+          params: { workspaceId },
+        }),
+      )) ||
+    (section === 'hub' &&
+      Boolean(
+        matchRoute({
+          to: '/workspaces/$workspaceId/connections',
+          params: { workspaceId },
+        }),
+      )) ||
     (section === 'hub' &&
       Boolean(
         matchRoute({
@@ -80,6 +105,7 @@ function NavLink({
   return (
     <Link
       {...route}
+      aria-current={active ? 'page' : undefined}
       className={`focus-on-dark relative isolate flex h-9 items-center rounded-[10px] px-4 text-[15px] transition-colors duration-200 ${active ? 'font-semibold text-[#161616]' : 'text-white/80 hover:bg-white/20 hover:text-white'}`}
     >
       <span
@@ -128,8 +154,13 @@ function WorkspaceButton({
       >
         {workspace.initials}
       </span>
-      <span className="min-w-0 flex-1 truncate text-[18px] font-[550] leading-5">
-        {workspace.name}
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-[18px] font-[550] leading-5">
+        <span className="truncate">{workspace.name}</span>
+        {isDemoWorkspace(workspace.id) && (
+          <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-white/70">
+            Demo
+          </span>
+        )}
       </span>
       <ChevronDown
         className={`size-3 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : 'group-hover:translate-y-0'} opacity-80`}
@@ -156,12 +187,37 @@ export function GlobalNavbar({
     queryKey: queryKeys.workspace(workspaceId),
     queryFn: ({ signal }) => demoApi.getWorkspace(workspaceId, signal),
   });
-  const safeWorkspace = workspace ?? {
-    id: workspaceId,
-    name: 'Atlas Commerce',
-    initials: 'AC',
-    accent: '#91e5b2',
-    accountCount: 4,
+  const { data: account } = useQuery({
+    queryKey: ['auth', 'session'],
+    queryFn: authApi.session,
+    retry: false,
+  });
+  const connectionWorkspaceId =
+    isDemoWorkspace(workspaceId) && account?.user
+      ? account.user.defaultWorkspaceId
+      : workspaceId;
+  const ownWorkspace = account?.workspaces.find(
+    (item) => item.id === workspaceId,
+  );
+  const safeWorkspace = {
+    ...(workspace ?? {
+      id: workspaceId,
+      name: 'Your workspace',
+      initials: 'AW',
+      accent: '#91e5b2',
+      accountCount: 0,
+    }),
+    ...(ownWorkspace
+      ? {
+          name: ownWorkspace.name,
+          initials: ownWorkspace.name
+            .split(' ')
+            .map((part) => part[0] ?? '')
+            .join('')
+            .slice(0, 2)
+            .toUpperCase(),
+        }
+      : {}),
   };
 
   return (
@@ -173,34 +229,37 @@ export function GlobalNavbar({
       />
       <nav
         className="absolute left-1/2 hidden h-9 -translate-x-1/2 items-center gap-1.5 lg:flex"
-        aria-label="Product navigation"
+        aria-label="Workspace navigation"
       >
         <NavLink label="Home" section="home" workspaceId={workspaceId} />
         <NavLink
-          label="Performance"
+          label="Campaigns"
           section="performance"
           workspaceId={workspaceId}
         />
-        <NavLink label="Stage" section="stage" workspaceId={workspaceId} />
-        <NavLink label="Hub" section="hub" workspaceId={workspaceId} />
+        <NavLink label="Creatives" section="stage" workspaceId={workspaceId} />
+        <NavLink
+          label="Connections"
+          section="hub"
+          workspaceId={connectionWorkspaceId}
+        />
       </nav>
       <div className="flex items-center gap-1">
-        <button
-          aria-label="View notifications"
-          onClick={() =>
-            toast('You’re all caught up', {
-              description: 'No new performance alerts.',
-            })
-          }
-          className="focus-on-dark hidden size-9 place-items-center rounded-full text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:grid"
-        >
-          <Bell className="size-[18px]" />
-        </button>
+        <AppTooltip label="Workspace activity" side="bottom">
+          <Link
+            to="/workspaces/$workspaceId/performance/activity"
+            params={{ workspaceId }}
+            aria-label="View workspace activity"
+            className="focus-on-dark hidden size-9 place-items-center rounded-full text-white/80 transition-colors hover:bg-white/10 hover:text-white sm:grid"
+          >
+            <Activity className="size-[18px]" />
+          </Link>
+        </AppTooltip>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
               <button
-                aria-label="Open product menu"
+                aria-label="Open navigation menu"
                 className="focus-on-dark grid size-9 place-items-center rounded-full text-white hover:bg-white/10 lg:hidden"
               />
             }
@@ -209,7 +268,7 @@ export function GlobalNavbar({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52 rounded-xl p-2">
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Switch product</DropdownMenuLabel>
+              <DropdownMenuLabel>Go to</DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             {(['home', 'performance', 'stage', 'hub'] as const).map(
@@ -218,13 +277,16 @@ export function GlobalNavbar({
                   key={section}
                   render={
                     <Link
-                      {...routeFor(section, workspaceId)}
+                      {...routeFor(
+                        section,
+                        section === 'hub' ? connectionWorkspaceId : workspaceId,
+                      )}
                       className="flex h-9 w-full items-center gap-2 rounded-lg px-2 capitalize"
                     />
                   }
                 >
                   <Grid2X2 className="size-4" />
-                  {section}
+                  {sectionLabels[section]}
                 </DropdownMenuItem>
               ),
             )}

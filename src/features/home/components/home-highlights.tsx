@@ -10,7 +10,13 @@ import { ArrowUpRight, CircleAlert, CircleCheck } from 'lucide-react';
 import type { DashboardData } from '@/src/lib/types';
 import { percent } from '@/src/lib/formatters';
 
-export function HomeHighlights({ data }: { data: DashboardData }) {
+export function HomeHighlights({
+  data,
+  onChooseOpportunity,
+}: {
+  data: DashboardData;
+  onChooseOpportunity: (prompt: string) => void;
+}) {
   return (
     <section
       aria-labelledby="highlights-title"
@@ -19,7 +25,7 @@ export function HomeHighlights({ data }: { data: DashboardData }) {
       <div className="mb-5 flex items-end justify-between">
         <div>
           <p className="text-[12px] font-semibold uppercase tracking-[.08em] text-[#9e9e9e]">
-            Live overview
+            Sample overview
           </p>
           <h2
             id="highlights-title"
@@ -28,7 +34,7 @@ export function HomeHighlights({ data }: { data: DashboardData }) {
             Today’s signal
           </h2>
         </div>
-        <span className="text-[13px] text-[#636363]">Updated 4 min ago</span>
+        <span className="text-[13px] text-[#636363]">Demo data · Not live</span>
       </div>
       <div className="grid grid-cols-4 gap-px overflow-hidden rounded-2xl bg-[#e8e8e8] max-md:grid-cols-2">
         {data.metrics.map((metric) => (
@@ -63,12 +69,28 @@ export function HomeHighlights({ data }: { data: DashboardData }) {
                 <CartesianGrid vertical={false} stroke="#e8e8e8" />
                 <XAxis
                   dataKey="date"
+                  padding={{ left: 16, right: 16 }}
+                  tickFormatter={(value: string) =>
+                    new Intl.DateTimeFormat('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      timeZone: 'UTC',
+                    }).format(new Date(value))
+                  }
                   axisLine={false}
                   tickLine={false}
                   tick={{ fontSize: 11, fill: '#777' }}
                   interval={3}
                 />
                 <Tooltip
+                  formatter={(value) => [
+                    new Intl.NumberFormat('en-US', {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 2,
+                    }).format(Number(value)),
+                    'Revenue',
+                  ]}
                   contentStyle={{
                     border: 0,
                     borderRadius: 12,
@@ -92,6 +114,12 @@ export function HomeHighlights({ data }: { data: DashboardData }) {
             {data.opportunities.slice(0, 2).map((item) => (
               <button
                 key={item.id}
+                type="button"
+                onClick={() =>
+                  onChooseOpportunity(
+                    `Help me evaluate this sample opportunity before making a decision: ${item.title}. ${item.detail}`,
+                  )
+                }
                 className="group -mx-2 flex items-start gap-3 rounded-xl p-2 text-left hover:bg-[#f8f8f8]"
               >
                 <span
