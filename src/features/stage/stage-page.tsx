@@ -1,12 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { useMutation } from '@tanstack/react-query';
 import {
   Check,
-  Clipboard,
   Cloud,
-  Copy,
   FileSpreadsheet,
   Folder,
   Link2,
@@ -25,47 +22,217 @@ import {
 } from '@/components/ui/accordion';
 import { useParams } from '@tanstack/react-router';
 import { AppFrame } from '@/src/components/shell/app-frame';
-import { demoApi } from '@/src/lib/demo-api';
 
-const stageSchema = z.object({
-  folders: z
-    .array(
-      z.object({
-        url: z
-          .url('Enter a valid shared folder URL.')
-          .refine(
-            (value) =>
-              /^https:\/\/drive\.google\.com\/drive\/folders\/[^/?#]+/.test(
-                value,
-              ),
-            'Use a Google Drive folder URL.',
-          ),
-      }),
-    )
-    .min(1),
-});
+const MAX_REFERENCES = 50;
+const MAX_URL_LENGTH = 2048;
+const MAX_DISPLAY_NAME_LENGTH = 80;
+
+interface FolderReference {
+  url: string;
+  displayName?: string;
+  folderId: string;
+}
+
+interface StoredReferencesResult {
+  references: FolderReference[];
+  issue: string | null;
+}
+
+const storedReferenceSchema = z.union([
+  z.string().max(MAX_URL_LENGTH),
+  z.object({
+    url: z.string().max(MAX_URL_LENGTH),
+    displayName: z.string().max(MAX_DISPLAY_NAME_LENGTH).optional(),
+    // Keep object entries written by earlier browser-only builds readable.
+    name: z.string().max(MAX_DISPLAY_NAME_LENGTH).optional(),
+  }),
+]);
+
+function parseDriveFolderUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_URL_LENGTH) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.hostname !== 'drive.google.com' ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return null;
+    }
+
+    const match = parsed.pathname.match(
+      /^\/drive(?:\/u\/\d+)?\/folders\/([A-Za-z0-9_-]{1,256})\/?$/,
+    );
+    if (!match) return null;
+
+    parsed.hash = '';
+    return { folderId: match[1], url: parsed.toString() };
+  } catch {
+    return null;
+  }
+}
+
+const folderUrlSchema = z
+  .string()
+  .trim()
+  .min(1, 'Enter a Google Drive folder URL.')
+  .max(MAX_URL_LENGTH, `Use a URL under ${MAX_URL_LENGTH} characters.`)
+  .refine(
+    (value) => parseDriveFolderUrl(value) !== null,
+    'Use a drive.google.com folder URL, such as /drive/folders/ID or /drive/u/0/folders/ID.',
+  );
+
+const stageSchema = z
+  .object({
+    folders: z
+      .array(z.object({ url: folderUrlSchema }))
+      .min(1)
+      .max(
+        MAX_REFERENCES,
+        `Save no more than ${MAX_REFERENCES} folder references.`,
+      ),
+  })
+  .superRefine((values, context) => {
+    const folderIds = new Set<string>();
+
+    values.folders.forEach((folder, index) => {
+      const parsed = parseDriveFolderUrl(folder.url);
+      if (!parsed) return;
+
+      if (folderIds.has(parsed.folderId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['folders', index, 'url'],
+          message: 'This Google Drive folder reference is already added.',
+        });
+        return;
+      }
+
+      folderIds.add(parsed.folderId);
+    });
+  });
+
 type StageForm = z.infer<typeof stageSchema>;
+
+function storageKey(workspaceId: string) {
+  return `aster-stage-${workspaceId}`;
+}
+
+function readStoredReferences(workspaceId: string): StoredReferencesResult {
+  if (typeof window === 'undefined') {
+    return { references: [], issue: null };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey(workspaceId));
+    if (raw === null) return { references: [], issue: null };
+
+    const decoded: unknown = JSON.parse(raw);
+    if (!Array.isArray(decoded)) {
+      return {
+        references: [],
+        issue:
+          'Saved folder references use an unsupported browser-data format. No changes were made.',
+      };
+    }
+
+    const references: FolderReference[] = [];
+    const folderIds = new Set<string>();
+    let skipped = 0;
+
+    for (const value of decoded) {
+      if (references.length >= MAX_REFERENCES) {
+        skipped += 1;
+        continue;
+      }
+
+      const stored = storedReferenceSchema.safeParse(value);
+      if (!stored.success) {
+        skipped += 1;
+        continue;
+      }
+
+      const url =
+        typeof stored.data === 'string' ? stored.data : stored.data.url;
+      const displayName =
+        typeof stored.data === 'string'
+          ? undefined
+          : (stored.data.displayName ?? stored.data.name)?.trim() || undefined;
+      const parsedUrl = parseDriveFolderUrl(url);
+
+      if (!parsedUrl || folderIds.has(parsedUrl.folderId)) {
+        skipped += 1;
+        continue;
+      }
+
+      folderIds.add(parsedUrl.folderId);
+      references.push({ ...parsedUrl, displayName });
+    }
+
+    return {
+      references,
+      issue: skipped
+        ? `${skipped} invalid or duplicate saved ${skipped === 1 ? 'entry was' : 'entries were'} skipped.`
+        : null,
+    };
+  } catch {
+    return {
+      references: [],
+      issue:
+        'Saved folder references could not be read. Browser storage may be blocked or contain invalid data. No changes were made.',
+    };
+  }
+}
+
+function writeStoredReferences(
+  workspaceId: string,
+  references: FolderReference[],
+): string | null {
+  if (typeof window === 'undefined') {
+    return 'Folder references are only available in a browser.';
+  }
+
+  try {
+    // Keep unnamed entries as strings so the original string[] format remains readable.
+    const stored = references.map((reference) =>
+      reference.displayName
+        ? { url: reference.url, displayName: reference.displayName }
+        : reference.url,
+    );
+    window.localStorage.setItem(
+      storageKey(workspaceId),
+      JSON.stringify(stored),
+    );
+    return null;
+  } catch {
+    return 'The folder references could not be saved. Check browser storage permissions or available space and try again.';
+  }
+}
 
 const features = [
   {
     icon: FileSpreadsheet,
-    title: 'Launch creative tests from a planning sheet',
-    body: 'Turn approved spreadsheet rows into structured campaign drafts without rebuilding the setup by hand.',
+    title: 'Save creative folder references for a workspace',
+    body: 'Keep optional Google Drive folder URLs beside your planning workflow without rebuilding a shortcut list each time.',
   },
   {
     icon: Folder,
-    title: 'Mirror cloud-drive folder structure',
-    body: 'Keep briefs, source files, exports, and delivery status aligned with the way your team already works.',
+    title: 'Review the folder links you saved',
+    body: 'Return to saved references in Creatives without granting access to files, metadata, or sharing settings.',
   },
   {
     icon: Repeat2,
-    title: 'Duplicate winning setups and replace creative',
-    body: 'Reuse proven campaign structure while Stage swaps only the creative and tracking that changed.',
+    title: 'Update references as your workflow changes',
+    body: 'Add or remove shortcuts at any time. Aster checks URL format locally and never verifies folder contents or permissions.',
   },
   {
     icon: Cloud,
-    title: 'Work across multiple drives and platforms',
-    body: 'Connect the folders and ad destinations each market needs from a single controlled workflow.',
+    title: 'Keep the workflow optional and workspace-scoped',
+    body: 'References stay in this browser for this workspace. They do not connect Drive, build campaigns, or publish ads.',
   },
 ];
 
@@ -74,7 +241,7 @@ function WorkflowIllustration() {
     <svg
       viewBox="0 0 425 161"
       className="mx-auto h-auto w-full max-w-[425px]"
-      aria-label="Creative workflow from planning to launch"
+      aria-label="Creative planning reference workflow"
     >
       <path
         d="M82 80h260"
@@ -110,40 +277,58 @@ function WorkflowIllustration() {
           strokeWidth="2"
         />
         <text x="16" y="64" fontSize="11" fill="#636363">
-          Launch
+          Review
         </text>
       </g>
     </svg>
   );
 }
 
-function StageLanding({ onStart }: { onStart: () => void }) {
+function StageLanding({
+  onStart,
+  savedCount,
+  storageIssue,
+}: {
+  onStart: () => void;
+  savedCount: number;
+  storageIssue: string | null;
+}) {
+  const savedReferenceLabel = `${savedCount} folder ${savedCount === 1 ? 'reference' : 'references'}`;
+
   return (
     <main className="scrollbar-subtle h-full overflow-y-auto px-4">
       <div className="mx-auto flex min-h-full max-w-[692px] flex-col items-center py-16 text-center">
         <WorkflowIllustration />
         <h1 className="mt-8 text-[36px] font-semibold leading-[43px] tracking-[-.02em]">
-          Move creative from plan to live, without the busywork.
+          Keep creative references organized, without the busywork.
         </h1>
         <p className="mt-3 max-w-[620px] text-[18px] leading-[23px] text-[#636363]">
-          Stage turns approved folders and planning sheets into reviewable
-          campaign drafts while preserving your structure.
+          Keep optional Google Drive folder shortcuts alongside your campaign
+          planning. This step is not required to connect Meta or prepare a
+          campaign.
         </p>
         <button
+          type="button"
           onClick={onStart}
           className="mt-6 h-12 rounded-full bg-[#161616] px-5 text-[18px] font-semibold text-white transition-colors hover:bg-[#2e2e2e]"
         >
-          Set up Stage
+          {savedCount ? 'Review saved references' : 'Add folder references'}
         </button>
-        <p className="mt-3 text-[13px] text-[#9e9e9e]">
-          Read-only folder access during setup. You approve every launch.
+        <p
+          role={storageIssue ? 'alert' : undefined}
+          className="mt-3 text-[13px] text-[#9e9e9e]"
+        >
+          {storageIssue ??
+            (savedCount
+              ? `${savedReferenceLabel} saved in this browser. Aster has no Drive access.`
+              : 'Save folder references in this browser only. No Drive access or publishing.')}
         </p>
         <section
           className="mt-12 w-full max-w-[544px] text-left"
           aria-labelledby="stage-features"
         >
           <h2 id="stage-features" className="sr-only">
-            Stage features
+            Creative reference features
           </h2>
           <Accordion
             className="overflow-hidden rounded-3xl bg-white shadow-[var(--shadow-standard)]"
@@ -178,60 +363,106 @@ function StageLanding({ onStart }: { onStart: () => void }) {
 
 function StageOnboarding({
   workspaceId,
+  storedState,
   onBack,
+  onSaved,
 }: {
   workspaceId: string;
+  storedState: StoredReferencesResult;
   onBack: () => void;
+  onSaved: (result: StoredReferencesResult) => void;
 }) {
-  const [verified, setVerified] = useState<Set<number>>(new Set());
+  const [formatChecked, setFormatChecked] = useState<Set<number>>(
+    () => new Set(storedState.references.map((_, index) => index)),
+  );
+  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
+  const [storageError, setStorageError] = useState<string | null>(null);
   const {
     control,
     register,
     handleSubmit,
     trigger,
-    getValues,
     formState: { errors },
   } = useForm<StageForm>({
     resolver: zodResolver(stageSchema),
-    defaultValues: { folders: [{ url: '' }] },
+    defaultValues: {
+      folders: storedState.references.length
+        ? storedState.references.map((reference) => ({ url: reference.url }))
+        : [{ url: '' }],
+    },
   });
   const { fields, append, remove } = useFieldArray({
     control,
     name: 'folders',
   });
-  const mutation = useMutation({
-    mutationFn: (values: StageForm) =>
-      demoApi.connectFolders(
-        workspaceId,
-        values.folders.map((folder) => folder.url),
-      ),
-    onSuccess: () =>
-      toast.success('Stage connected', {
-        description: 'Your folders are ready for the first creative workflow.',
-      }),
-  });
-  const serviceAccount = 'stage-access@aster-ops.iam.gserviceaccount.com';
-  const verify = async (index: number) => {
+
+  const checkFormat = async (index: number) => {
     const valid = await trigger(`folders.${index}.url`, { shouldFocus: true });
-    if (valid) {
-      setVerified((current) => new Set(current).add(index));
-      toast.success('Folder verified', {
-        description: getValues(`folders.${index}.url`),
-      });
+    if (!valid) return;
+
+    setFormatChecked((current) => new Set(current).add(index));
+    toast.success('Folder URL format looks valid', {
+      description:
+        'This was a local format check. Aster did not access Google Drive.',
+    });
+  };
+
+  const saveReferences = (values: StageForm) => {
+    const references: FolderReference[] = [];
+
+    for (const folder of values.folders) {
+      const parsed = parseDriveFolderUrl(folder.url);
+      if (!parsed) {
+        setSaveState('idle');
+        setStorageError(
+          'A folder URL changed before it could be saved. Check its format and try again.',
+        );
+        return;
+      }
+
+      const existing = storedState.references.find(
+        (reference) => reference.folderId === parsed.folderId,
+      );
+      references.push({ ...parsed, displayName: existing?.displayName });
     }
+
+    const error = writeStoredReferences(workspaceId, references);
+
+    if (error) {
+      setSaveState('idle');
+      setStorageError(error);
+      return;
+    }
+
+    setStorageError(null);
+    setSaveState('saved');
+    setFormatChecked(new Set(references.map((_, index) => index)));
+    onSaved({ references, issue: null });
+    toast.success('Folder references saved', {
+      description:
+        'Saved in this browser only. Aster did not access Google Drive.',
+    });
   };
-  const copy = async () => {
-    await navigator.clipboard.writeText(serviceAccount);
-    toast.success('Service account copied');
+
+  const markChanged = (index: number) => {
+    setSaveState('idle');
+    setStorageError(null);
+    setFormatChecked((current) => {
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
   };
+
   return (
     <main className="scrollbar-subtle h-full overflow-y-auto px-5">
       <div className="mx-auto w-full max-w-[980px] py-10">
         <button
+          type="button"
           onClick={onBack}
           className="text-[13px] font-semibold text-[#636363] hover:text-[#161616]"
         >
-          ← Back to Stage
+          ← Back to Creatives
         </button>
         <div className="mt-7 flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-xl bg-[#161616] text-white">
@@ -242,14 +473,15 @@ function StageOnboarding({
           </span>
         </div>
         <h1 className="mt-6 text-[36px] font-semibold leading-[43px] tracking-[-.02em]">
-          Connect your creative folders
+          Save your creative folder references
         </h1>
         <p className="mt-2 text-[18px] text-[#636363]">
-          Two steps to a structured, reviewable creative workflow.
+          Two steps to optional, browser-local shortcuts you can review later.
         </p>
         <div className="my-8 h-px bg-[#e8e8e8]" />
         <form
-          onSubmit={handleSubmit((values) => mutation.mutate(values))}
+          noValidate
+          onSubmit={handleSubmit(saveReferences)}
           className="grid grid-cols-2 gap-7 max-md:grid-cols-1"
         >
           <section className="flex gap-4">
@@ -258,28 +490,31 @@ function StageOnboarding({
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-[18px] font-semibold">
-                Share folders with Stage
+                Save references, not access
               </h2>
               <p className="mt-2 text-[#636363]">
-                Add this read-only service account to the folders Stage should
-                monitor.
+                Aster keeps folder URLs in this browser for this workspace. It
+                does not connect to or read Google Drive.
               </p>
-              <button
-                type="button"
-                onClick={copy}
-                aria-label={`Copy Stage service account ${serviceAccount}`}
-                className="mt-5 flex h-12 w-full min-w-0 items-center gap-3 rounded-2xl bg-[#e5efff] px-4 text-left transition-colors hover:bg-[#dbe9ff]"
-              >
-                <Clipboard className="size-4 shrink-0 text-[#295a9f]" />
+              <div className="mt-5 flex h-12 w-full min-w-0 items-center gap-3 rounded-2xl bg-[#e5efff] px-4 text-left">
+                <Folder className="size-4 shrink-0 text-[#295a9f]" />
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
-                  {serviceAccount}
+                  Folder references only
                 </span>
-                <Copy className="size-4 shrink-0" />
-              </button>
+                <span className="shrink-0 text-[12px] font-semibold text-[#295a9f]">
+                  No Drive access
+                </span>
+              </div>
               <div className="mt-4 rounded-2xl bg-[#f8f8f8] p-4 text-[13px] leading-[18px] text-[#636363]">
                 <Share2 className="mb-2 size-4 text-[#161616]" />
-                In Drive, choose Share, paste the account above, and keep the
-                role set to Viewer.
+                You do not need to share folders or change Drive permissions.
+                Saving a link does not grant access, verify permissions, or
+                import files.
+                {storedState.issue ? (
+                  <p role="alert" className="mt-3 text-[#cd2823]">
+                    {storedState.issue}
+                  </p>
+                ) : null}
               </div>
             </div>
           </section>
@@ -289,10 +524,12 @@ function StageOnboarding({
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-[18px] font-semibold">
-                Add your folder links
+                Save your folder links
               </h2>
               <p className="mt-2 text-[#636363]">
-                Verify at least one shared folder before continuing.
+                {storedState.references.length
+                  ? 'Review or update the references saved in this browser.'
+                  : 'Add at least one link. Aster checks URL format locally only.'}
               </p>
               <div className="mt-5 grid gap-2">
                 {fields.map((field, index) => (
@@ -301,6 +538,9 @@ function StageOnboarding({
                       <Link2 className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[#9e9e9e]" />
                       <input
                         {...register(`folders.${index}.url`)}
+                        type="url"
+                        inputMode="url"
+                        autoComplete="url"
                         aria-label={`Folder URL ${index + 1}`}
                         aria-invalid={Boolean(errors.folders?.[index]?.url)}
                         aria-describedby={
@@ -308,28 +548,23 @@ function StageOnboarding({
                             ? `folder-error-${index}`
                             : undefined
                         }
-                        onInput={() => {
-                          setVerified((current) => {
-                            const next = new Set(current);
-                            next.delete(index);
-                            return next;
-                          });
-                        }}
-                        className="h-12 w-full rounded-2xl border border-[#e0e0e0] pl-12 pr-24 outline-none hover:border-[#cccccc] focus:border-[#9e9e9e] aria-invalid:border-[#cd2823] aria-invalid:shadow-[0_0_0_4px_rgba(223,11,11,.1)]"
+                        onInput={() => markChanged(index)}
+                        className="h-12 w-full rounded-2xl border border-[#e0e0e0] pl-12 pr-28 outline-none hover:border-[#cccccc] focus:border-[#9e9e9e] aria-invalid:border-[#cd2823] aria-invalid:shadow-[0_0_0_4px_rgba(223,11,11,.1)]"
                         placeholder="https://drive.google.com/drive/folders/…"
                       />
                       <button
                         type="button"
-                        onClick={() => void verify(index)}
-                        className={`absolute right-2 top-2 h-8 rounded-xl px-3 text-[13px] font-semibold ${verified.has(index) ? 'bg-[#def4e7] text-[#256b43]' : 'bg-[#f2f2f2] hover:bg-[#e8e8e8]'}`}
+                        onClick={() => void checkFormat(index)}
+                        aria-label={`Check folder URL ${index + 1} format locally`}
+                        className={`absolute right-2 top-2 h-8 rounded-xl px-3 text-[13px] font-semibold ${formatChecked.has(index) ? 'bg-[#def4e7] text-[#256b43]' : 'bg-[#f2f2f2] hover:bg-[#e8e8e8]'}`}
                       >
-                        {verified.has(index) ? (
+                        {formatChecked.has(index) ? (
                           <span className="flex items-center gap-1">
                             <Check className="size-3" />
-                            Verified
+                            Format OK
                           </span>
                         ) : (
-                          'Verify'
+                          'Check format'
                         )}
                       </button>
                     </div>
@@ -347,17 +582,19 @@ function StageOnboarding({
                         type="button"
                         onClick={() => {
                           remove(index);
-                          setVerified(
+                          setSaveState('idle');
+                          setStorageError(null);
+                          setFormatChecked(
                             (current) =>
                               new Set(
                                 [...current]
                                   .filter(
-                                    (verifiedIndex) => verifiedIndex !== index,
+                                    (checkedIndex) => checkedIndex !== index,
                                   )
-                                  .map((verifiedIndex) =>
-                                    verifiedIndex > index
-                                      ? verifiedIndex - 1
-                                      : verifiedIndex,
+                                  .map((checkedIndex) =>
+                                    checkedIndex > index
+                                      ? checkedIndex - 1
+                                      : checkedIndex,
                                   ),
                               ),
                           );
@@ -372,19 +609,43 @@ function StageOnboarding({
               </div>
               <button
                 type="button"
-                onClick={() => append({ url: '' })}
-                className="mt-3 flex items-center gap-2 text-[13px] font-semibold text-[#0067ed]"
+                disabled={fields.length >= MAX_REFERENCES}
+                onClick={() => {
+                  append({ url: '' });
+                  setSaveState('idle');
+                  setStorageError(null);
+                }}
+                className="mt-3 flex items-center gap-2 text-[13px] font-semibold text-[#0067ed] disabled:cursor-not-allowed disabled:text-[#9e9e9e]"
               >
                 <Plus className="size-4" />
                 Add another
               </button>
               <button
                 type="submit"
-                disabled={!verified.size || mutation.isPending}
-                className="mt-6 h-12 w-full rounded-full bg-[#161616] text-[18px] font-semibold text-white hover:bg-[#2e2e2e] disabled:cursor-not-allowed disabled:bg-[#e8e8e8] disabled:text-[#9e9e9e]"
+                className="mt-6 h-12 w-full rounded-full bg-[#161616] text-[18px] font-semibold text-white hover:bg-[#2e2e2e]"
               >
-                {mutation.isPending ? 'Connecting…' : 'Continue'}
+                {saveState === 'saved' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Check className="size-4" />
+                    Saved in this browser
+                  </span>
+                ) : (
+                  'Save folder references'
+                )}
               </button>
+              {storageError ? (
+                <p role="alert" className="mt-2 text-[13px] text-[#cd2823]">
+                  {storageError}
+                </p>
+              ) : null}
+              <p
+                aria-live="polite"
+                className="mt-2 min-h-[18px] text-[13px] leading-[18px] text-[#636363]"
+              >
+                {saveState === 'saved'
+                  ? `${fields.length} folder ${fields.length === 1 ? 'reference' : 'references'} saved locally. Return to Creatives and use Review saved references to revisit them.`
+                  : 'Saving stores these URLs locally. It does not open, verify, import, or sync the folders.'}
+              </p>
             </div>
           </section>
         </form>
@@ -393,21 +654,47 @@ function StageOnboarding({
   );
 }
 
+function StageWorkspace({ workspaceId }: { workspaceId: string }) {
+  const [onboarding, setOnboarding] = useState(false);
+  const [storedState, setStoredState] = useState<StoredReferencesResult>(() =>
+    readStoredReferences(workspaceId),
+  );
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === storageKey(workspaceId)) {
+        setStoredState(readStoredReferences(workspaceId));
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [workspaceId]);
+
+  return onboarding ? (
+    <StageOnboarding
+      workspaceId={workspaceId}
+      storedState={storedState}
+      onSaved={setStoredState}
+      onBack={() => setOnboarding(false)}
+    />
+  ) : (
+    <StageLanding
+      savedCount={storedState.references.length}
+      storageIssue={storedState.issue}
+      onStart={() => setOnboarding(true)}
+    />
+  );
+}
+
 export function StagePage() {
   const { workspaceId } = useParams({ strict: false }) as {
     workspaceId: string;
   };
-  const [onboarding, setOnboarding] = useState(false);
+
   return (
     <AppFrame workspaceId={workspaceId} section="stage">
-      {onboarding ? (
-        <StageOnboarding
-          workspaceId={workspaceId}
-          onBack={() => setOnboarding(false)}
-        />
-      ) : (
-        <StageLanding onStart={() => setOnboarding(true)} />
-      )}
+      <StageWorkspace key={workspaceId} workspaceId={workspaceId} />
     </AppFrame>
   );
 }
