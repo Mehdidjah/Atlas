@@ -1,26 +1,33 @@
 import type {
-  ActivityItem,
-  AutomationRule,
   Campaign,
   ChatSummary,
-  DashboardData,
   DashboardFilters,
   Suggestion,
   Workspace,
 } from '@/src/lib/types';
-import { compactCurrency, compactNumber } from '@/src/lib/formatters';
+import {
+  dashboardData,
+  performanceDataset,
+  performanceStore,
+  type DraftInput,
+  type RuleInput,
+} from '@/src/features/performance/performance-store';
 
 const wait = (signal?: AbortSignal, duration = 260) =>
   new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, duration);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        window.clearTimeout(timer);
-        reject(new DOMException('Request cancelled', 'AbortError'));
-      },
-      { once: true },
-    );
+    if (signal?.aborted) {
+      reject(new DOMException('Request cancelled', 'AbortError'));
+      return;
+    }
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Request cancelled', 'AbortError'));
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, duration);
+    signal?.addEventListener('abort', abort, { once: true });
   });
 
 const workspaces: Workspace[] = [
@@ -47,333 +54,48 @@ const workspaces: Workspace[] = [
   },
 ];
 
-const baseCampaigns: Campaign[] = [
-  {
-    id: 'cmp-1',
-    status: 'Active',
-    name: 'US · Prospecting · Advantage+',
-    channel: 'Meta',
-    spend: 18430,
-    revenue: 62192,
-    roas: 3.37,
-    cpa: 24.2,
-    conversions: 762,
-    updatedAt: '4 min ago',
-  },
-  {
-    id: 'cmp-2',
-    status: 'Active',
-    name: 'Brand search · Always on',
-    channel: 'Google',
-    spend: 8860,
-    revenue: 38710,
-    roas: 4.37,
-    cpa: 17.3,
-    conversions: 512,
-    updatedAt: '7 min ago',
-  },
-  {
-    id: 'cmp-3',
-    status: 'Paused',
-    name: 'Spring drop · Retargeting',
-    channel: 'Meta',
-    spend: 6355,
-    revenue: 15302,
-    roas: 2.41,
-    cpa: 31.8,
-    conversions: 200,
-    updatedAt: '21 min ago',
-  },
-  {
-    id: 'cmp-4',
-    status: 'Active',
-    name: 'Creator mix · Broad',
-    channel: 'TikTok',
-    spend: 7210,
-    revenue: 17954,
-    roas: 2.49,
-    cpa: 28.4,
-    conversions: 254,
-    updatedAt: '32 min ago',
-  },
-  {
-    id: 'cmp-5',
-    status: 'Active',
-    name: 'Shopping · High intent',
-    channel: 'Google',
-    spend: 11405,
-    revenue: 40502,
-    roas: 3.55,
-    cpa: 21.9,
-    conversions: 521,
-    updatedAt: '38 min ago',
-  },
-  {
-    id: 'cmp-6',
-    status: 'Draft',
-    name: 'EU · Summer launch',
-    channel: 'Meta',
-    spend: 0,
-    revenue: 0,
-    roas: 0,
-    cpa: 0,
-    conversions: 0,
-    updatedAt: '1 hr ago',
-  },
-  {
-    id: 'cmp-7',
-    status: 'Paused',
-    name: 'UGC test · Iteration 03',
-    channel: 'TikTok',
-    spend: 3218,
-    revenue: 6590,
-    roas: 2.05,
-    cpa: 36.6,
-    conversions: 88,
-    updatedAt: '2 hr ago',
-  },
-  {
-    id: 'cmp-8',
-    status: 'Active',
-    name: 'Catalog sales · Returning',
-    channel: 'Meta',
-    spend: 9980,
-    revenue: 33264,
-    roas: 3.33,
-    cpa: 22.5,
-    conversions: 443,
-    updatedAt: '3 hr ago',
-  },
-  {
-    id: 'cmp-9',
-    status: 'Active',
-    name: 'Non-brand search · Core',
-    channel: 'Google',
-    spend: 4820,
-    revenue: 13605,
-    roas: 2.82,
-    cpa: 26.5,
-    conversions: 182,
-    updatedAt: '4 hr ago',
-  },
-  {
-    id: 'cmp-10',
-    status: 'Paused',
-    name: 'Lookalike · Purchasers 2%',
-    channel: 'Meta',
-    spend: 5680,
-    revenue: 12395,
-    roas: 2.18,
-    cpa: 34.4,
-    conversions: 165,
-    updatedAt: 'Yesterday',
-  },
-  {
-    id: 'cmp-11',
-    status: 'Active',
-    name: 'New customer · Video mix',
-    channel: 'TikTok',
-    spend: 5904,
-    revenue: 15774,
-    roas: 2.67,
-    cpa: 29.8,
-    conversions: 198,
-    updatedAt: 'Yesterday',
-  },
-  {
-    id: 'cmp-12',
-    status: 'Draft',
-    name: 'Holiday holdout · v2',
-    channel: 'Google',
-    spend: 0,
-    revenue: 0,
-    roas: 0,
-    cpa: 0,
-    conversions: 0,
-    updatedAt: '2 days ago',
-  },
-];
-
-const dashboard: DashboardData = {
-  metrics: [
-    {
-      id: 'spend',
-      label: 'Spend',
-      value: 75862,
-      display: '$75.9K',
-      change: 8.4,
-      comparison: 'vs previous 30 days',
-      trend: [22, 28, 26, 35, 37, 43, 47],
-    },
-    {
-      id: 'revenue',
-      label: 'Revenue',
-      value: 256288,
-      display: '$256.3K',
-      change: 14.2,
-      comparison: 'vs previous 30 days',
-      trend: [18, 24, 31, 29, 42, 49, 58],
-    },
-    {
-      id: 'roas',
-      label: 'ROAS',
-      value: 3.38,
-      display: '3.38×',
-      change: 5.3,
-      comparison: 'vs previous 30 days',
-      trend: [28, 30, 26, 35, 40, 38, 45],
-    },
-    {
-      id: 'conversions',
-      label: 'Conversions',
-      value: 3325,
-      display: '3,325',
-      change: -2.1,
-      comparison: 'vs previous 30 days',
-      trend: [40, 38, 42, 37, 35, 34, 36],
-    },
-  ],
-  series: [
-    { date: 'Aug 08', spend: 2050, revenue: 6510 },
-    { date: 'Aug 10', spend: 2210, revenue: 7020 },
-    { date: 'Aug 12', spend: 2130, revenue: 7360 },
-    { date: 'Aug 14', spend: 2450, revenue: 7750 },
-    { date: 'Aug 16', spend: 2310, revenue: 8160 },
-    { date: 'Aug 18', spend: 2620, revenue: 8790 },
-    { date: 'Aug 20', spend: 2510, revenue: 8530 },
-    { date: 'Aug 22', spend: 2740, revenue: 9250 },
-    { date: 'Aug 24', spend: 2670, revenue: 8870 },
-    { date: 'Aug 26', spend: 2890, revenue: 9820 },
-    { date: 'Aug 28', spend: 2790, revenue: 10120 },
-    { date: 'Aug 30', spend: 3010, revenue: 10440 },
-    { date: 'Sep 01', spend: 2930, revenue: 10980 },
-    { date: 'Sep 03', spend: 3220, revenue: 11270 },
-    { date: 'Sep 05', spend: 3140, revenue: 11880 },
-  ],
-  channelMix: [
-    { channel: 'Meta', share: 54, color: '#734ede' },
-    { channel: 'Google', share: 31, color: '#45b97c' },
-    { channel: 'TikTok', share: 15, color: '#87dde1' },
-  ],
-  opportunities: [
-    {
-      id: 'o1',
-      title: 'Catalog sales is gaining efficiency',
-      detail: 'ROAS rose 18% while spend stayed within its daily guardrail.',
-      tone: 'good',
-    },
-    {
-      id: 'o2',
-      title: 'Retargeting frequency is elevated',
-      detail:
-        'Frequency reached 4.8 in the last seven days. Refresh creative soon.',
-      tone: 'watch',
-    },
-    {
-      id: 'o3',
-      title: 'Three campaigns are pacing under budget',
-      detail: 'Aster can redistribute up to $420/day with your approval.',
-      tone: 'good',
-    },
-  ],
-};
-
 const suggestions: Suggestion[] = [
   {
     id: 's1',
-    label: 'Find wasted spend',
+    label: 'Plan my first campaign',
     prompt:
-      'Review the last 30 days and identify campaigns spending above target CPA without enough conversions.',
+      'Help me plan my first campaign: objective, audience, creative, budget cap and a review checklist. What do you need to know about my business?',
     category: 'suggested',
   },
   {
     id: 's2',
-    label: 'Summarize this week',
+    label: 'Explain sample performance',
     prompt:
-      'Give me an executive summary of performance this week compared with the previous week.',
+      'Explain the available sample performance metrics and their period. What can and cannot be concluded from this demo data?',
     category: 'suggested',
   },
   {
     id: 's3',
-    label: 'Show scaling opportunities',
+    label: 'Review my budget safely',
     prompt:
-      'Find campaigns with stable CPA and enough conversion volume that are ready for a careful budget increase.',
+      'Help me review a campaign budget safely: affordable test spend, acquisition-cost target, review date and stop conditions. Do not change any budgets.',
     category: 'suggested',
   },
   {
     id: 'm1',
-    label: 'Audit Meta campaign structure',
+    label: 'Connect my Meta account',
     prompt:
-      'Audit my active Meta campaigns for audience overlap, fragmented budgets, and naming inconsistencies.',
+      'How do I connect Meta? Explain Aster sign-in separately from Meta advertising authorization and tell me my next setup step.',
     category: 'meta',
   },
   {
     id: 'm2',
-    label: 'Prepare a safe budget change',
+    label: 'Choose the correct ad account',
     prompt:
-      'Draft a 15% budget increase for eligible Meta campaigns, including the expected impact and rollback conditions.',
+      'Help me choose the correct Meta ad account for this workspace. What business details and account IDs should I check, and does saving a selection sync performance or publish ads?',
     category: 'meta',
   },
   {
     id: 'm3',
-    label: 'Check creative fatigue',
+    label: 'Understand Meta permissions',
     prompt:
-      'Check active Meta ads for creative fatigue using frequency, CTR trend, and CPA trend.',
+      'Explain the Meta permissions and business access needed to connect an ad account. What should I check if my account is missing or authorization has expired?',
     category: 'meta',
-  },
-];
-
-const rules: AutomationRule[] = [
-  {
-    id: 'r1',
-    name: 'Protect prospecting CPA',
-    condition: 'CPA above $35 for 3 days',
-    action: 'Reduce daily budget by 15%',
-    status: 'Running',
-    lastRun: '12 min ago',
-  },
-  {
-    id: 'r2',
-    name: 'Scale consistent winners',
-    condition: 'ROAS above 3.5 and 20+ sales',
-    action: 'Increase daily budget by 10%',
-    status: 'Running',
-    lastRun: '1 hr ago',
-  },
-  {
-    id: 'r3',
-    name: 'Fatigue alert',
-    condition: 'Frequency above 4.5',
-    action: 'Notify workspace owners',
-    status: 'Paused',
-    lastRun: 'Yesterday',
-  },
-];
-
-const activity: ActivityItem[] = [
-  {
-    id: 'a1',
-    title: 'Budget guardrail applied',
-    detail:
-      'Aster reduced Spring drop · Retargeting by 15% after CPA exceeded $35.',
-    time: '12 min ago',
-    kind: 'agent',
-  },
-  {
-    id: 'a2',
-    title: 'Campaign resumed',
-    detail:
-      'US · Prospecting · Advantage+ resumed after its payment issue cleared.',
-    time: '43 min ago',
-    kind: 'campaign',
-  },
-  {
-    id: 'a3',
-    title: 'Creative fatigue detected',
-    detail:
-      'Two ads crossed the frequency threshold in Catalog sales · Returning.',
-    time: '2 hr ago',
-    kind: 'alert',
   },
 ];
 
@@ -398,29 +120,33 @@ export const demoApi = {
   ): Promise<ChatSummary[]> {
     await wait(signal, 180);
     const stored = localStorage.getItem(`aster-chats-${workspaceId}`);
-    if (stored) return JSON.parse(stored) as ChatSummary[];
-    return [
-      {
-        id: 'weekly-readout',
-        title: 'Weekly performance readout',
-        updatedAt: 'Today',
-      },
-      {
-        id: 'creative-fatigue',
-        title: 'Creative fatigue review',
-        updatedAt: 'Yesterday',
-      },
-      {
-        id: 'budget-plan',
-        title: 'September budget plan',
-        updatedAt: 'Aug 29',
-      },
-    ];
+    if (stored) {
+      try {
+        const parsed: unknown = JSON.parse(stored);
+        if (
+          !Array.isArray(parsed) ||
+          !parsed.every(
+            (c) =>
+              c &&
+              typeof c.id === 'string' &&
+              typeof c.title === 'string' &&
+              typeof c.updatedAt === 'string',
+          )
+        )
+          throw new Error();
+        return parsed as ChatSummary[];
+      } catch {
+        throw new Error(
+          'Saved conversations could not be read. Check browser storage and try again.',
+        );
+      }
+    }
+    return [];
   },
   async createChat(workspaceId: string, title: string) {
     await wait(undefined, 180);
     const current = await this.getChats(workspaceId);
-    const chat = { id: `chat-${Date.now()}`, title, updatedAt: 'Now' };
+    const chat = { id: `chat-${crypto.randomUUID()}`, title, updatedAt: 'Now' };
     localStorage.setItem(
       `aster-chats-${workspaceId}`,
       JSON.stringify([chat, ...current]),
@@ -431,94 +157,89 @@ export const demoApi = {
     await wait(signal, 160);
     return suggestions;
   },
-  async sendMessage(prompt: string) {
+  async sendMessage(_prompt: string) {
     await wait(undefined, 720);
     return {
       id: `msg-${Date.now()}`,
-      answer: `I reviewed your connected demo data for “${prompt.slice(0, 72)}${prompt.length > 72 ? '…' : ''}”. The strongest opportunity is a measured 10–15% budget increase on campaigns above 3.3× ROAS. I would keep the retargeting campaign paused until CPA returns below $30. No account changes were made.`,
+      answer:
+        'This is a demo response, not a live AI analysis. No ad accounts were accessed or changed. Prepare a draft for human review before considering any campaign changes.',
     };
   },
-  async getDashboard(filters: DashboardFilters, signal?: AbortSignal) {
-    await wait(signal, 300);
-    if (filters.demo === 'empty') {
-      return {
-        ...dashboard,
-        metrics: [],
-        series: [],
-        channelMix: [],
-        opportunities: [],
-      };
-    }
-    const rangeFactor = { '7d': 0.24, '30d': 1, '90d': 2.92 }[filters.range];
-    const comparison =
-      filters.compare === 'year'
-        ? 'vs same period last year'
-        : `vs previous ${filters.range === '7d' ? '7 days' : filters.range === '30d' ? '30 days' : '90 days'}`;
-    const metrics = dashboard.metrics.map((metric) => {
-      const value =
-        metric.id === 'roas'
-          ? metric.value +
-            (filters.range === '7d'
-              ? -0.17
-              : filters.range === '90d'
-                ? 0.06
-                : 0)
-          : metric.value * rangeFactor;
-      const display =
-        metric.id === 'roas'
-          ? `${value.toFixed(2)}×`
-          : metric.id === 'conversions'
-            ? compactNumber.format(value)
-            : compactCurrency.format(value);
-      return {
-        ...metric,
-        value,
-        display,
-        change: metric.change + (filters.compare === 'year' ? 3.1 : 0),
-        comparison,
-      };
-    });
-    return { ...dashboard, metrics };
+  async getDashboard(
+    filters: DashboardFilters,
+    signal?: AbortSignal,
+    workspaceId = 'demo',
+  ) {
+    await wait(signal, 240);
+    return dashboardData(filters, workspaceId);
   },
-  async getCampaigns(filters: DashboardFilters, signal?: AbortSignal) {
-    await wait(signal, 300);
-    if (filters.demo === 'empty') return [];
-    return baseCampaigns.filter(
-      (campaign) =>
-        (filters.channel === 'All channels' ||
-          campaign.channel === filters.channel) &&
-        (filters.status === 'All statuses' ||
-          campaign.status === filters.status) &&
-        campaign.name.toLowerCase().includes(filters.search.toLowerCase()),
-    );
+  async getCampaigns(
+    filters: DashboardFilters,
+    signal?: AbortSignal,
+    workspaceId = 'demo',
+  ) {
+    await wait(signal, 240);
+    return performanceDataset(filters, workspaceId).campaigns;
   },
-  async updateCampaign(id: string, status: Campaign['status']) {
-    await wait(undefined, 320);
-    return { id, status };
+  async updateCampaign(
+    id: string,
+    status: Campaign['status'],
+    workspaceId = 'demo',
+  ) {
+    await wait();
+    return performanceStore.updateStatus(id, status, workspaceId);
   },
-  async createCampaign(input: {
-    name: string;
-    channel: string;
-    objective: string;
-    dailyBudget: number;
-  }) {
-    await wait(undefined, 520);
-    return { id: `campaign-${Date.now()}`, ...input, status: 'Draft' as const };
+  async createCampaign(
+    input: {
+      name: string;
+      channel: string;
+      objective: string;
+      dailyBudget: number;
+    },
+    workspaceId = 'demo',
+  ) {
+    await wait();
+    return performanceStore.saveDraft(input as DraftInput, workspaceId);
   },
-  async getRules(demo: 'empty' | 'populated', signal?: AbortSignal) {
+  async getDrafts(workspaceId = 'demo', signal?: AbortSignal) {
     await wait(signal);
-    return demo === 'empty' ? [] : rules;
+    return performanceStore.drafts(workspaceId);
   },
-  async getActivity(demo: 'empty' | 'populated', signal?: AbortSignal) {
+  async prepareBudgetRequest(
+    input: DraftInput,
+    workspaceId = 'demo',
+    options?: { campaignId?: string; reason?: string; assistant?: boolean },
+  ) {
+    await wait();
+    return performanceStore.saveDraft(input, workspaceId, options);
+  },
+  async approveDraft(id: string, workspaceId = 'demo') {
+    await wait();
+    return performanceStore.approve(id, workspaceId);
+  },
+  async getRules(
+    _demo: 'empty' | 'populated',
+    signal?: AbortSignal,
+    workspaceId = 'demo',
+  ) {
     await wait(signal);
-    return demo === 'empty' ? [] : activity;
+    return performanceStore.rules(workspaceId);
+  },
+  async saveRule(input: RuleInput, workspaceId = 'demo', id?: string) {
+    await wait();
+    return performanceStore.saveRule(input, workspaceId, id);
+  },
+  async getActivity(
+    _demo: 'empty' | 'populated',
+    signal?: AbortSignal,
+    workspaceId = 'demo',
+  ) {
+    await wait(signal);
+    return performanceStore.activity(workspaceId);
   },
   async getBusinessContext(workspaceId: string, signal?: AbortSignal) {
     await wait(signal, 140);
-    return (
-      localStorage.getItem(`aster-context-${workspaceId}`) ??
-      'Atlas Commerce sells everyday travel essentials across North America. Our main goal is profitable new-customer growth while keeping blended ROAS above 3.0×.'
-    );
+    return localStorage.getItem(`aster-context-${workspaceId}`) ?? '';
   },
   async saveBusinessContext(workspaceId: string, value: string) {
     await wait(undefined, 280);

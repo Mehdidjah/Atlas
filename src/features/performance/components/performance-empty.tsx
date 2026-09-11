@@ -1,6 +1,22 @@
 import { Link } from '@tanstack/react-router';
+import { useWorkspaceJourney } from '@/src/features/connections/use-workspace-journey';
 
-export function PerformanceEmpty({ workspaceId }: { workspaceId: string }) {
+export function PerformanceEmpty({
+  workspaceId,
+  recommendations = false,
+}: {
+  workspaceId: string;
+  recommendations?: boolean;
+}) {
+  const journey = useWorkspaceJourney(workspaceId);
+  const route = journey.metaReady
+    ? journey.routes.drafts
+    : journey.action.route;
+  const detail = journey.metaReady
+    ? recommendations
+      ? 'Your Meta ad-account selection is saved. Live recommendations and reporting are not implemented yet. You can prepare a campaign draft for review.'
+      : 'Your Meta ad-account selection is saved. Live reporting is not implemented yet. Prepare a campaign draft while reporting is unavailable.'
+    : journey.action.detail;
   return (
     <div className="mx-auto flex max-w-[650px] flex-col items-center py-14 text-center">
       <svg
@@ -51,28 +67,31 @@ export function PerformanceEmpty({ workspaceId }: { workspaceId: string }) {
         </g>
       </svg>
       <h2 className="mt-5 text-[24px] font-semibold leading-[29px]">
-        Your performance workspace is ready
+        {journey.action.title}
       </h2>
-      <p className="mt-2 text-[20px] leading-7 text-[#636363]">
-        Connect an ad account or launch a draft to turn live delivery data into
-        clear, controlled actions.
-      </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <Link
-          to="/workspaces/$workspaceId/connections/meta"
-          params={{ workspaceId }}
-          className="grid h-9 min-w-[170px] place-items-center rounded-[18px] bg-[#161616] px-5 text-[15px] font-semibold text-white transition-colors hover:bg-[#2e2e2e]"
-        >
-          Connect Meta Ads
-        </Link>
-        <Link
-          to="/workspaces/$workspaceId/performance/launch"
-          params={{ workspaceId }}
-          className="grid h-9 min-w-[170px] place-items-center rounded-[18px] bg-[#ffe243] px-5 text-[15px] font-semibold text-[#181d27] transition-colors hover:bg-[#fdcf12]"
-        >
-          Launch a draft
-        </Link>
-      </div>
+      <p className="mt-2 text-[20px] leading-7 text-[#636363]">{detail}</p>
+      {journey.loading ? (
+        <output className="mt-6 text-sm text-[#636363]">
+          {journey.action.short}
+        </output>
+      ) : (
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link
+            {...route}
+            className="grid h-9 min-w-[170px] place-items-center rounded-[18px] border border-[#e0e0e0] bg-white px-5 text-[15px] font-semibold transition-colors hover:bg-[#f8f8f8]"
+          >
+            {journey.metaReady ? 'Prepare a draft' : journey.action.label}
+          </Link>
+          {journey.phase === 'sign-in' && (
+            <Link
+              {...journey.routes.signIn}
+              className="grid h-9 place-items-center rounded-[18px] px-5 text-[15px] font-semibold text-[#636363] hover:bg-[#f2f2f2]"
+            >
+              Sign in
+            </Link>
+          )}
+        </div>
+      )}
     </div>
   );
 }

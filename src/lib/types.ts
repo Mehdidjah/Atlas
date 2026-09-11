@@ -121,3 +121,33 @@ export interface MetaConnectionStatus {
   connection: MetaConnection | null;
   accounts: MetaAdAccount[];
 }
+
+/** Local prototype records. Approval never publishes to an ad platform. */
+export interface DemoDraft {
+  id: string;
+  name: string;
+  channel: Exclude<Channel, 'All channels'>;
+  objective: 'Sales' | 'Leads' | 'Traffic';
+  dailyBudget: number;
+  status: 'Draft';
+  approval: 'Needs review' | 'Approved locally';
+  kind: 'campaign' | 'budget';
+  campaignId?: string;
+  reason?: string;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+}
+export interface DemoAudit extends ActivityItem {
+  createdAt: number;
+  actor: 'user' | 'assistant';
+  action: 'draft' | 'approval' | 'status' | 'rule';
+  entityId: string;
+}
+export interface DemoRule extends AutomationRule {
+  status: 'Paused';
+  threshold: number;
+  metric: 'CPA' | 'ROAS';
+  createdAt: number;
+  updatedAt: number;
+}

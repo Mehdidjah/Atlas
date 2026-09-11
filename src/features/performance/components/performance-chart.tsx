@@ -13,14 +13,14 @@ import { compactCurrency } from '@/src/lib/formatters';
 
 export function PerformanceChart({
   data,
-  range,
+  range: _range,
 }: {
   data: PerformancePoint[];
   range: '7d' | '30d' | '90d';
 }) {
   const [showSpend, setShowSpend] = useState(true);
   const [showRevenue, setShowRevenue] = useState(true);
-  const visibleData = range === '7d' ? data.slice(-4) : data;
+  const visibleData = data;
   return (
     <section
       className="mt-5 min-w-0 rounded-2xl border border-[#e8e8e8] p-5"
@@ -32,12 +32,14 @@ export function PerformanceChart({
             Revenue and spend
           </h2>
           <p className="mt-1 text-[13px] text-[#636363]">
-            Daily totals across the selected channels
+            {data.length} daily sample points · all current campaign filters
+            apply
           </p>
         </div>
         <div className="flex gap-2">
           <button
             aria-pressed={showRevenue}
+            disabled={showRevenue && !showSpend}
             onClick={() => setShowRevenue((value) => !value)}
             className={`flex h-8 items-center gap-2 rounded-full px-3 text-[13px] font-semibold ${showRevenue ? 'bg-[#eee8ff]' : 'bg-[#f2f2f2] text-[#636363]'}`}
           >
@@ -46,6 +48,7 @@ export function PerformanceChart({
           </button>
           <button
             aria-pressed={showSpend}
+            disabled={showSpend && !showRevenue}
             onClick={() => setShowSpend((value) => !value)}
             className={`flex h-8 items-center gap-2 rounded-full px-3 text-[13px] font-semibold ${showSpend ? 'bg-[#def4e7]' : 'bg-[#f2f2f2] text-[#636363]'}`}
           >
@@ -58,6 +61,7 @@ export function PerformanceChart({
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <AreaChart
             data={visibleData}
+            accessibilityLayer
             margin={{ left: 0, right: 8, top: 8, bottom: 0 }}
           >
             <defs>
@@ -73,6 +77,12 @@ export function PerformanceChart({
             <CartesianGrid vertical={false} stroke="#e8e8e8" />
             <XAxis
               dataKey="date"
+              tickFormatter={(value: string) =>
+                new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                })
+              }
               axisLine={false}
               tickLine={false}
               tick={{ fontSize: 12, fill: '#636363' }}
@@ -97,6 +107,7 @@ export function PerformanceChart({
             />
             {showRevenue ? (
               <Area
+                isAnimationActive={false}
                 type="monotone"
                 dataKey="revenue"
                 stroke="#734ede"
