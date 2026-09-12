@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.worker.json --pretty false",
     "lint": "oxlint src db vite.config.ts drizzle.config.ts && oxlint --tsconfig tsconfig.worker.json worker",
+    "test": "node --test worker/auth.test.mjs tests/workflows.test.mjs tests/journey.test.mjs",
     "db:generate": "drizzle-kit generate",
     "format": "oxfmt"
   },
